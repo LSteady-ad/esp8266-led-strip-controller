@@ -1,0 +1,14 @@
+# ---- 编译产物（arduino-cli / Arduino IDE 生成，不进仓库；成品 bin 在 firmware/ 里）----
+build/
+*.elf
+*.map
+
+# ---- 网页源码（本地保留，不上传）----
+REDESIGN/
+
+# ---- 开发临时文件 ----
+*.tmp
+
+# ---- Windows 系统文件 ----
+Thumbs.db
+desktop.ini
