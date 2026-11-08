@@ -28,17 +28,20 @@
 // 头文件依赖（放在此处，避免各 .ino 重复 include）
 // ============================================================
 #include <ESP8266WiFi.h>
-#include <ESPAsyncTCP.h>
-#include <ESPAsyncWebServer.h>
-#include <FastLED.h>
-#include <ArduinoJson.h>
+// 以下第三方库全部内置在 sketch 的 src/ 子目录（见 src/README.md），
+// 用 "" + 相对路径包含，换电脑不需要在"库管理器"里安装任何库。
+// 注意：ESP8266 开发板 core 仍需安装 3.1.2，它提供 WiFi/EEPROM/flash_hal 等底层头文件。
+#include "src/ESPAsyncTCP/ESPAsyncTCP.h"
+#include "src/ESPAsyncWebServer/ESPAsyncWebServer.h"
+#include "src/FastLED/FastLED.h"
+#include "src/ArduinoJson/ArduinoJson.h"
 #include <EEPROM.h>
 #include "PubSubClient.h"
 #include <Arduino.h>
 #include <stddef.h>
-#include <IRrecv.h>
-#include <IRremoteESP8266.h>
-#include <IRutils.h>
+#include "src/IRremoteESP8266/IRrecv.h"
+#include "src/IRremoteESP8266/IRremoteESP8266.h"
+#include "src/IRremoteESP8266/IRutils.h"
 // OTA 升级库。用 "" 而不是 <>：库源码（ESP8266httpUpdate.h/.cpp）已放进 sketch 文件夹，
 // 和 PubSubClient 一样内联进来 —— 避免不同机器上 Arduino 库索引差异导致"找不到头文件"。
 #include "ESP8266httpUpdate.h"

@@ -1,0 +1,52 @@
+#include "frame_interpolator.h"
+#include "../stl/circular_buffer.h"
+#include "../math/math.h"
+#include "pixel_stream.h"
+
+#include "../log/log.h"
+
+#include "../math/math.h"
+#include "../math/math.h"
+
+#define DBG FL_DBG
+
+namespace fl {
+namespace video {
+
+FrameInterpolator::FrameInterpolator(size_t nframes, float fps)
+    : mFrameTracker(fps) {
+    size_t capacity = fl::max(1, nframes);
+    mFrames.reserve(capacity);
+}
+
+bool FrameInterpolator::draw(fl::u32 now, Frame *dst) {
+    bool ok = draw(now, dst->rgb());
+    return ok;
+}
+
+bool FrameInterpolator::draw(fl::u32 now, fl::span<CRGB> leds) {
+    fl::u32 frameNumber, nextFrameNumber;
+    u8 amountOfNextFrame;
+    // DBG("now: " << now);
+    mFrameTracker.get_interval_frames(now, &frameNumber, &nextFrameNumber,
+                                      &amountOfNextFrame);
+    if (!has(frameNumber)) {
+        return false;
+    }
+
+    if (has(frameNumber) && !has(nextFrameNumber)) {
+        // just paint the current frame
+        Frame *frame = get(frameNumber).get();
+        frame->draw(leds);
+        return true;
+    }
+
+    Frame *frame1 = get(frameNumber).get();
+    Frame *frame2 = get(nextFrameNumber).get();
+
+    Frame::interpolate(*frame1, *frame2, amountOfNextFrame, leds);
+    return true;
+}
+
+} // namespace video
+} // namespace fl

@@ -1,0 +1,26 @@
+/// @file _build.hpp
+/// @brief Unity build header for fl/audio/detector/ directory
+/// Includes all implementation files in alphabetical order
+
+#include "backbeat.cpp.hpp"
+#include "beat.cpp.hpp"
+#include "buildup.cpp.hpp"
+#include "chord.cpp.hpp"
+#include "downbeat.cpp.hpp"
+#include "drop.cpp.hpp"
+#include "dynamics_analyzer.cpp.hpp"
+#include "energy_analyzer.cpp.hpp"
+#include "equalizer.cpp.hpp"
+#include "frequency_bands.cpp.hpp"
+#include "key.cpp.hpp"
+#include "mood_analyzer.cpp.hpp"
+#include "multiband_beat_detector.cpp.hpp"
+#include "musical_beat_detector.cpp.hpp"
+#include "note.cpp.hpp"
+#include "percussion.cpp.hpp"
+#include "pitch.cpp.hpp"
+#include "silence.cpp.hpp"
+#include "tempo_analyzer.cpp.hpp"
+#include "transient.cpp.hpp"
+#include "vibe.cpp.hpp"
+#include "vocal.cpp.hpp"

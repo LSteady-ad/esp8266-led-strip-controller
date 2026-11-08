@@ -1,0 +1,25 @@
+#pragma once
+
+// SpiralMatrix6 visualizer class
+// Extracted from animartrix_detail.hpp
+
+#include "../fp_state.h"
+#include "viz_base.h"
+
+namespace fl {
+
+class SpiralMatrix6 : public IAnimartrix2Viz {
+public:
+    void draw(Context &ctx) override;
+};
+
+
+// Fixed-point Q31 scalar implementation of SpiralMatrix6.
+class SpiralMatrix6_FP : public IAnimartrix2Viz {
+public:
+    void draw(Context &ctx) override;
+private:
+    FPVizState mState;
+};
+
+}  // namespace fl

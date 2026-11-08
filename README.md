@@ -37,6 +37,8 @@ ESP8266 驱动的 LED 灯带控制器。一块 ESP8266、一条 WS2812 灯带，
 
 Arduino IDE 装好 ESP8266 core（3.1.2 版本测试通过），开发板选 **Generic ESP8266 Module**，Flash Size 选 **4MB (FS:1MB OTA:~1019KB)**。
 
+工程用到的第三方库（FastLED、ESPAsyncTCP、ESPAsyncWebServer、IRremoteESP8266、ArduinoJson）已全部内置在 `LAND_LED/src/`，**不需要在「库管理器」里安装任何库**，换电脑只要有 core 3.1.2 就能编译。说明见 `LAND_LED/src/README.md`。
+
 这个布局得选对。官方文档里讲 flash layout 的部分说得很清楚：OTA 需要两块等大的固件槽，1MB 的老布局每槽只有 ~470KB，而这固件有 542KB——串口能烧进去，OTA 却会装不下。第一次用数据线烧，之后就能走网页里的 OTA 卡片升级了。
 
 ## 目录结构
