@@ -949,11 +949,15 @@ void callback(char* topic, byte* payload, unsigned int length) {
   mqttLastMsgAt = millis();   // 收到消息的时刻，网页据此显示"上一次接收"的时间
 
   if (Mqtt_Buff == "on") {
-    currentMode = "solid";
-    modelbianhua = true;
+    if (currentMode != "solid") {
+      currentMode = "solid";
+      modelbianhua = true;
+    }
   } else if (Mqtt_Buff == "off") {
-    currentMode = "off";
-    modelbianhua = true;
+    if (currentMode != "off") {
+      currentMode = "off";
+      modelbianhua = true;
+    }
   } else if (Mqtt_Buff.indexOf("get") != -1) {
     getsend(Mqtt_Buff);
   } else {
@@ -1247,12 +1251,18 @@ void setupWebServer() {
         currentMode = newMode;
         showBatteryLevel();
       } else {
-        resetEffectState();
-        currentMode   = newMode;
+        // 只有模式真正切换时才重置灯效状态、触发单色渐入。
+        // 重复下发同一个 mode（轮询式控制 / 重复点已选中的模式按钮）
+        // 不应让渐亮动画重新从黑开始。
+        bool modeChanged = (currentMode != newMode);
         inBatteryMode = false;
-        modelbianhua = true;
-        if (currentMode == "disco") {
-          fill_solid_new(leds, num_leds, CRGB::Black);
+        if (modeChanged) {
+          resetEffectState();
+          currentMode = newMode;
+          modelbianhua = true;
+          if (newMode == "disco") {
+            fill_solid_new(leds, num_leds, CRGB::Black);
+          }
         }
       }
     }

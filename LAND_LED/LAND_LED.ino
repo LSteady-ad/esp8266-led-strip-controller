@@ -1553,9 +1553,12 @@ inline CRGB hexToCRGB(const String& hexStr) {
  * @param animate 是否启用渐入动画
  */
 inline void applySolidColor(CRGB color, bool animate) {
+  bool changed = (color.r != solidColor.r || color.g != solidColor.g || color.b != solidColor.b);
   solidColor = color;
   if (animate) {
-    modelbianhua = true;
+    // 颜色没变就不重新触发渐入：重复点同一个颜色（红外/网页/MQTT）
+    // 不应让灯带再从黑亮一遍。
+    if (changed) modelbianhua = true;
   } else {
     fill_solid_new(leds, num_leds, solidColor);
   }
@@ -1568,7 +1571,8 @@ inline void applySolidColor(CRGB color, bool animate) {
  *  - sequential : 顺序点亮 — 从第一颗依次向后
  *  - center     : 中心扩散 — 从灯带中心向两端交替
  *  - ends       : 两端向内 — 从两端同时向中间靠拢
- *  - fade       : 全局渐亮 — 所有灯珠同时从暗到亮渐变
+ *  - fade       : 全局渐亮 — 所有灯珠同时从当前颜色渐变到目标颜色
+ *                 （关闭状态点亮时从黑开始；已点亮时换色则是交叉渐变）
  *
  * 智能跳帧：颜色切换时若 RGB 分量差之和 < 80，直接全量填充跳过动画。
  *
@@ -1579,7 +1583,7 @@ inline void applySolidColor(CRGB color, bool animate) {
 inline void solid_cut(CRGB leds[], uint16_t num_leds, CRGB solidColor) {
   //上一个模式的颜色
   static CRGB last_solidColor = solidColor;
-  static CRGB prevColor       = solidColor;  // 用于 fade 关闭时记住渐暗起点
+  static CRGB fadeFrom        = CRGB::Black;  // fade 动画起点（动画开始那一帧屏幕上的颜色）
   static uint16_t num = 1;
   static uint32_t random_seed = 1;
 
@@ -1602,6 +1606,29 @@ inline void solid_cut(CRGB leds[], uint16_t num_leds, CRGB solidColor) {
       // 颜色相差大 或 显式触发：走动画
       num = 0;
       random_seed = millis() | 1;  // 确保不为0
+
+      // 记录渐入动画的起点 = 动画开始那一刻屏幕上实际显示的代表色（取所有
+      // 已点亮灯珠的平均色）：
+      //   - 关闭状态点亮：阵列全黑，起点为黑 → 仍然"从黑渐亮"；
+      //   - 已点亮时重复下发同一颜色/模式：所有灯珠已等于目标 → 跳过动画，
+      //     不会再出现"从黑重新亮一遍"的闪烁；
+      //   - 已点亮时换色：从当前颜色交叉渐变 → 不会先闪黑。
+      uint32_t sumR = 0, sumG = 0, sumB = 0;
+      uint16_t litCount = 0;
+      bool alreadyTarget = true;
+      for (uint16_t i = 0; i < num_leds; i++) {
+        if (leds[i] != solidColor) alreadyTarget = false;
+        if (leds[i].r || leds[i].g || leds[i].b) {
+          sumR += leds[i].r;
+          sumG += leds[i].g;
+          sumB += leds[i].b;
+          litCount++;
+        }
+      }
+      fadeFrom = litCount
+        ? CRGB((uint8_t)(sumR / litCount), (uint8_t)(sumG / litCount), (uint8_t)(sumB / litCount))
+        : CRGB::Black;
+      if (alreadyTarget) num = num_leds + 1;  // 无需动画，交给下面统一 return
     }
     modelbianhua = false;
     last_solidColor = solidColor;
@@ -1649,36 +1676,18 @@ inline void solid_cut(CRGB leds[], uint16_t num_leds, CRGB solidColor) {
       fanxiang(reverseDisplay, leds, num_leds);
     }
   } else if (solidAnimMode == "fade") {
-    // 全局渐亮/渐暗：所有灯珠同时从上一状态渐变到目标
-    bool isOff = (solidColor.r == 0 && solidColor.g == 0 && solidColor.b == 0);
-    if (isOff) {
-      // 渐暗：从当前灯带实际颜色采样作为起点，避免静态变量残留导致闪色
-      if (num == 0) {
-        CRGB sampleColor = CRGB::Black;
-        for (uint16_t i = 0; i < num_leds; i++) {
-          if (leds[i].r > 0 || leds[i].g > 0 || leds[i].b > 0) {
-            sampleColor = leds[i];
-            break;
-          }
-        }
-        if (sampleColor.r == 0 && sampleColor.g == 0 && sampleColor.b == 0) {
-          // 灯带已经全黑，无需动画
-          num = num_leds + 1;
-          return;
-        }
-        prevColor = sampleColor;
-      }
-      uint8_t scale = 255 - (uint8_t)((uint16_t)num * 255 / num_leds);
-      CRGB displayColor = prevColor;
-      displayColor.nscale8_video(scale);
-      fill_solid_new(leds, num_leds, displayColor);
+    // 全局渐亮/渐暗：所有灯珠同时从动画起点交叉渐变到目标颜色。
+    // 起点 fadeFrom 在动画开始那一帧采样（见上方），因此：
+    //   - 从关闭状态点亮：起点为黑，仍是"从黑渐亮"；
+    //   - 已点亮时换色 / 重复下发同一颜色：从当前颜色渐变，不会闪黑。
+    uint8_t scale = (uint8_t)((uint16_t)num * 255 / num_leds);
+    CRGB displayColor = fadeFrom;
+    if (scale >= 255) {
+      displayColor = solidColor;        // 最后一帧精确落到目标色
     } else {
-      // 渐亮：从黑到目标颜色
-      uint8_t scale = (uint8_t)((uint16_t)num * 255 / num_leds);
-      CRGB displayColor = solidColor;
-      displayColor.nscale8_video(scale);
-      fill_solid_new(leds, num_leds, displayColor);
+      nblend(displayColor, solidColor, scale);
     }
+    fill_solid_new(leds, num_leds, displayColor);
   } else {
     // 默认随机溶解：用简单的线性同余生成器生成伪随机序列
     if (num < num_leds) {
