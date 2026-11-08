@@ -43,8 +43,6 @@ Arduino IDE 装好 ESP8266 core（3.1.2 版本测试通过），开发板选 **G
 
 ```
 LAND_LED/    固件（Arduino 工程，网页以 index_html 形式内嵌在其中）
-firmware/    编译好的成品固件（对应上面的 4MB 布局）
-tools/       烧录工具 + CH340 / CP210x 串口驱动
 ```
 
 固件里内联了 ESP8266httpUpdate（源码直接放工程里，免得每台电脑库索引不一样编译不过），MQTT 用的 PubSubClient。
