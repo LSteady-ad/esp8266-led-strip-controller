@@ -359,25 +359,25 @@ static const int MQTT_SERVER_EEPROM_ADDR = WIFI_LIST_EEPROM_ADDR + sizeof(WiFiLi
 /**
  * 可选外设开关 / OTA 定时自动升级 的存储区域（追加在 MQTT 服务器配置之后）。
  * 布局（共 164 字节）：
- *   [0]      魔数 0xA5
- *   [1]      位标志：bit0=DHT11  bit1=红外接收  bit2=OTA 定时自动升级
- *   [2~3]    预留（旧版"每天X点"间隔位，不再使用）
- *   [4~35]   当前固件对应 bin 的 Last-Modified 原始串（32B，全 0xFF/0x00 = 未知）
- *            自动检查时与巴法云文件头里的 Last-Modified（即 OTA 页面的"上传时间"）
- *            比对：相同 → 跳过升级（防止循环刷机）；不同 → 有新版本，触发升级
- *   [36~163] 自动升级固件链接（128B，空 = 使用内置 OTA_AUTO_URL）
+ *   [0]      魔数 0xA7
+ *   [1]      位标志：bit0=DHT11  bit1=红外接收  bit2=定时自动检查升级
+ *   [2~3]    自动检查间隔分钟数（小端 uint16，默认 OTA_AUTO_INTERVAL_DEFAULT）
+ *   [4~35]   巴法云用户私钥 openID（32B，网页可填，用于调用 firmwareVersion 接口）
+ *   [36~39]  当前固件版本号（uint32，升级成功后记录）
+ *   [40~43]  当前固件的"上传时间"戳（uint32，升级成功后记录）
  */
 static const int OTA_FLAGS_EEPROM_ADDR = MQTT_SERVER_EEPROM_ADDR + sizeof(MqttServerConfig);
-#define OTA_FLAGS_MAGIC    0xA6   /* v2：间隔改分钟(uint16)，偏移与 v1(0xA5) 不兼容 */
-#define OTA_FLAGS_MAGIC_V1 0xA5   /* 旧布局魔数：迁移时识别用 */
+#define OTA_FLAGS_MAGIC    0xA7   /* v3：接入巴法云 OTA API（openID+版本号+上传时间），与 v2(0xA6) 不兼容 */
+#define OTA_FLAGS_MAGIC_V2 0xA6   /* 旧布局魔数：迁移时识别用 */
 #define PERIPH_FLAG_DHT    0x01
 #define PERIPH_FLAG_IR     0x02
 #define PERIPH_FLAG_OTA    0x04
 #define OTA_FLAGS_INTERVAL_OFF  2
 #define OTA_FLAGS_INTERVAL_LEN  2
-#define OTA_FLAGS_LM_LEN   32
-#define OTA_FLAGS_LM_OFF   4
-#define OTA_FLAGS_URL_OFF  36
+#define OTA_FLAGS_OID_OFF   4
+#define OTA_FLAGS_OID_LEN   32
+#define OTA_FLAGS_UNIX_OFF  36
+#define OTA_FLAGS_VER_OFF   40
 #define OTA_FLAGS_URL_LEN  128
 #define OTA_FLAGS_TOTAL    164
 #define OTA_AUTO_INTERVAL_DEFAULT 240
@@ -466,12 +466,17 @@ extern MqttConfig    mqttConfig;     ///< MQTT 配置（从 EEPROM 加载）
 extern MqttServerConfig mqttServerConfig; ///< MQTT 服务器地址/端口（从 EEPROM 加载）
 extern bool          dhtEnabled;      ///< DHT11 温湿度传感器是否启用（网页"灯带设置"里开关）
 extern bool          irEnabled;       ///< 红外接收是否启用
-extern bool          otaAutoEnabled;  ///< OTA 升级模式：true=自动（监听 MQTT 主题推送）false=手动
+extern bool          otaAutoEnabled;  ///< OTA 定时自动检查升级是否启用
 extern float         dhtTemperature;  ///< 最近一次成功读取的温度（℃）
 extern float         dhtHumidity;     ///< 最近一次成功读取的湿度（%）
 extern volatile int  otaProgress;     ///< OTA 进度：-1空闲 -2失败 0~99下载中 100写入Flash（/otastatus 返回）
-extern char          otaAutoUrl[129]; ///< 升级固件链接（存 EEPROM，空 = 内置 OTA_AUTO_URL）
-extern char          otaLocalLM[33];  ///< 当前固件对应 bin 的 Last-Modified 原始串（主题推送时比对）
+extern char          otaOpenID[33];     ///< 巴法云用户私钥（openID，网页可填，OTA 检查用）
+extern uint32_t      otaLastUnix;       ///< 当前固件的"上传时间"戳（升级成功后记录）
+extern uint32_t      otaLastVersion;    ///< 当前固件版本号（升级成功后记录）
+extern char          otaRemoteInfo[96]; ///< 最近一次检查到的远程固件信息（网页显示用）
+extern bool          otaHasNew;         ///< 远程是否有新版本
+extern bool          otaCheckNow;       ///< 网页"立即检查并升级"触发的标志（loop 消费）
+extern bool          otaCheckReq;       ///< 网页查看检查信息触发的标志（loop 消费）
 extern bool          apTempEnabled;  ///< 热点当前是"自动/强制"开的（非用户勾选「AP模式」）
 extern bool          wifiSwitchNow;  ///< 置位后 loop 立即切换到当前选中(active)的 WiFi 网络
 extern WiFiClient    espClient;      ///< WiFi TCP 客户端
@@ -535,8 +540,10 @@ bool saveMqttServerConfig(); ///< 将 MQTT 服务器地址/端口写入 EEPROM �
 void loadPeriphFlags();  ///< 加载外设/OTA自动升级开关（未初始化时写默认值）
 bool savePeriphFlags();  ///< 将外设/OTA自动升级开关写入 EEPROM 并回读校验
 void periphTick();       ///< 外设轮询（loop 里调用：DHT11 每 2 秒读一次）
-void otaSetLocalLM(const String& lm);
-String otaFetchRemoteLM(const String& url); ///< HEAD 固件链接，取 Last-Modified 原始串（失败返回空） ///< 记录"当前固件对应 bin 的上传时间"（升级成功后调用）
+void otaAutoTick();           ///< 定时自动检查升级：间隔到点调巴法云 API，有新版本直接刷入
+void otaCheckRequest();       ///< 网页"立即检查并升级"：登记请求（loop 里执行）
+void otaSyncVersionFromApi(); ///< 升级成功后同步一次版本号/上传时间到 EEPROM
+void otaCheckBemfa(bool allowUpgrade); ///< 调巴法云 firmwareVersion 接口比对版本，allowUpgrade=true 时直接刷入
 int  connectToWiFi(int wifiStartLed, int wifiEndLed);
 void setupWebServer();
 void manageWiFiConnection();  ///< 运行时动态 AP 管理 + 断网多网络轮询重连（loop 中调用）

@@ -948,29 +948,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
   mqttMsgCount++;
   mqttLastMsgAt = millis();   // 收到消息的时刻，网页据此显示"上一次接收"的时间
 
-  // ---- OTA：向订阅主题发送以 http 开头的固件链接即可远程升级 ----
-  // 仅"自动模式"（网页 OTA 卡片里的开关）下响应；手动模式下主题推送被忽略。
-  // 同一固件只刷一次：升级成功后会记录该文件的上传时间（Last-Modified），
-  // 再次推送相同文件（上传时间没变）时自动跳过。
-  {
-    String pushMsg = Mqtt_Buff;
-    pushMsg.trim();
-    if (pushMsg.startsWith("http://") || pushMsg.startsWith("https://")) {
-      DEBUG_PRINTLN("[OTA] 主题收到固件链接: " + pushMsg);
-      if (!otaAutoEnabled) {
-        DEBUG_PRINTLN("[OTA] 当前为手动模式，忽略主题推送（可在网页 OTA 卡片开启自动模式）");
-        return;
-      }
-      String lm = otaFetchRemoteLM(pushMsg);
-      if (lm.length() > 0 && lm == String(otaLocalLM)) {
-        DEBUG_PRINTLN("[OTA] 该固件与当前版本一致（上传时间相同），跳过");
-        return;
-      }
-      otaPendingUrl = pushMsg;   // 交给 loop 的 OTA 执行块；成功后自动记录新的上传时间
-      return;
-    }
-  }
-
   if (Mqtt_Buff == "on") {
     if (currentMode != "solid") {
       currentMode = "solid";
@@ -1600,27 +1577,38 @@ void setupWebServer() {
       return;
     }
     // ---- OTA 定时自动升级：开关 + 每天几点 + 升级链接 ----
-    // ---- OTA 升级模式开关（自动=监听主题推送 / 手动=网页一键升级）----
+    // ---- OTA 定时自动检查升级开关 ----
     if (request->hasParam("otaauto")) {
       otaAutoEnabled = (request->getParam("otaauto")->value().toInt() != 0);
       savePeriphFlags();
       request->send(200, "text/plain", otaAutoEnabled
-        ? "已切换为自动模式：向订阅主题发送固件链接（http 开头）即可远程升级"
-        : "已切换为手动模式：仅在网页点击一键升级时升级");
+        ? "已开启定时自动检查升级（固件有新版本会直接刷入）"
+        : "已关闭定时自动检查升级");
       return;
     }
-    // ---- OTA 自动升级链接（空 = 恢复内置巴法云链接）----
-    if (request->hasParam("otaautourl")) {
-      String u = request->getParam("otaautourl")->value();
-      u.trim();
-      if (u.length() > 0 && !(u.startsWith("http://") || u.startsWith("https://"))) {
-        request->send(400, "text/plain", "链接无效，需以 http:// 或 https:// 开头");
-        return;
-      }
-      if (u.length() >= OTA_FLAGS_URL_LEN) { request->send(400, "text/plain", "链接太长"); return; }
-      strlcpy(otaAutoUrl, u.c_str(), sizeof(otaAutoUrl));
+    // ---- OTA 自动检查间隔（分钟）----
+    if (request->hasParam("otainterval")) {
+      int v = request->getParam("otainterval")->value().toInt();
+      if (v < 1 || v > 65535) { request->send(400, "text/plain", "间隔须为 1~65535 分钟"); return; }
+      otaIntervalMin = (uint16_t)v;
       savePeriphFlags();
-      request->send(200, "text/plain", u.length() ? "自动升级链接已保存" : "自动升级链接已恢复为内置巴法云链接");
+      request->send(200, "text/plain", "自动检查间隔已设为每 " + String(v) + " 分钟");
+      return;
+    }
+    // ---- 巴法云私钥 openID（OTA 检查用）----
+    if (request->hasParam("otaopenid")) {
+      String k = request->getParam("otaopenid")->value();
+      k.trim();
+      if (k.length() >= OTA_FLAGS_OID_LEN) { request->send(400, "text/plain", "openID 太长"); return; }
+      strlcpy(otaOpenID, k.c_str(), sizeof(otaOpenID));
+      savePeriphFlags();
+      request->send(200, "text/plain", k.length() ? "openID 已保存" : "openID 已清空");
+      return;
+    }
+    // ---- 立即检查并升级（有新版本自动刷入）----
+    if (request->hasParam("otachecknow")) {
+      otaCheckNow = true;
+      request->send(200, "text/plain", "开始检查，若有新固件将自动升级...");
       return;
     }
     if (request->hasParam("savemqtt")) {
@@ -1873,7 +1861,8 @@ void setupWebServer() {
     doc["otaAuto"]      = otaAutoEnabled;
     doc["temperature"]  = dhtEnabled ? String(dhtTemperature, 1) : String("-1");
     doc["humidity"]     = dhtEnabled ? String((int)(dhtHumidity + 0.5f)) : String("-1");
-    doc["otaAutoUrl"]   = otaAutoUrl;
+    doc["otaOpenID"]    = otaOpenID;
+    doc["otaRemoteInfo"] = otaRemoteInfo;
 
     doc["timerActive"] = timerActive;
     doc["timerRemaining"] = timerActive
@@ -1994,6 +1983,16 @@ void setupWebServer() {
     request->send(200, "text/plain", String(otaProgress));
   });
 
+  // ---- GET /otacheck（OTA 检查信息：当前固件版本 vs 巴法云远程固件）----
+  server.on("/otacheck", HTTP_GET, [](AsyncWebServerRequest* request) {
+    otaCheckRequest();   // 登记检查请求（loop 里执行，避免在异步回调里做网络请求）
+    String j = String("{\"local\":\"v") + otaLastVersion
+             + "\",\"remote\":\"" + otaRemoteInfo
+             + "\",\"hasNew\":" + (otaHasNew ? "true" : "false") + "}";
+    request->send(200, "application/json", j);
+  });
+
+  // ---- GET /ota（手动指定固件链接升级）----
   server.on("/ota", HTTP_GET, [](AsyncWebServerRequest* request) {
     if (!request->hasParam("url")) {
       request->send(400, "text/plain", "缺少 url 参数");
@@ -2006,10 +2005,7 @@ void setupWebServer() {
       return;
     }
     DEBUG_PRINTLN("OTA 升级链接: " + url);
-    // 手动一键升级后切回手动模式：不再自动响应主题推送（用户要求"点击一键升级将不再自动"）
-    otaAutoEnabled = false;
-    savePeriphFlags();
-    request->send(200, "text/plain", "开始升级，设备即将重启...（已切换为手动模式）");
+    request->send(200, "text/plain", "开始升级，设备即将重启...");
 
     // 升级过程会阻塞且可能重启，放在延时后执行，确保上面的响应已发出
     static String otaUrl;   // static 避免栈上大对象
