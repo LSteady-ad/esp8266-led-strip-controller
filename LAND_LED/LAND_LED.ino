@@ -326,8 +326,13 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 <div class="pb accordion-body"><div class="in">
   <div class="st">固件下载链接</div>
   <div class="row"><input type="text" id="otaUrl" style="flex:1" placeholder="粘贴 .bin 固件下载链接"></div>
-  <div class="row"><span style="flex:1">⚙ 开机自动升级<small style="opacity:.6"> 用内置默认链接</small></span>
+  <div class="row"><span style="flex:1">⏰ 每天定时自动升级<small style="opacity:.6"> 固件有更新才会刷入</small></span>
+  <input type="number" id="otaHour" min="0" max="23" value="4" style="width:56px"><span class="lb" style="min-width:auto">点</span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="otaAutoToggle"><span class="tr"></span></label></div></div>
+  <div class="st">自动升级固件链接（留空 = 巴法云内置链接）</div>
+  <div class="row"><input type="text" id="otaAutoUrl" style="flex:1" placeholder="http://bin.bemfa.com/..."></div>
+  <div class="row"><button class="btn" id="otaCheckBtn" style="width:100%">🔍 检查更新</button></div>
+  <div class="cs" id="otaCheckInfo">尚未检查</div>
   <button class="btn g p" id="otaUpgrade" style="width:100%">⬆️ 一键升级</button>
   <div class="cs" id="otaStatus"></div>
   <div class="opwrap" id="otaBarWrap" style="display:none"><div class="opbar" id="otaBar"></div></div>
@@ -996,6 +1001,10 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         document.getElementById('irToggle').checked=!!data.irEnabled;
         var _at=document.getElementById('otaAutoToggle');
         if(_at)_at.checked=!!data.otaAuto;
+        var _oh=document.getElementById('otaHour');
+        if(_oh&&document.activeElement!==_oh)_oh.value=data.otaHour||4;
+        var _ou2=document.getElementById('otaAutoUrl');
+        if(_ou2&&document.activeElement!==_ou2)_ou2.value=data.otaAutoUrl||'';
         updateDhtDisplay(data);
         document.getElementById('mqttToggle').checked=!!data.mqttEnabled;
         updateMqttToggleStatus(!!data.mqttEnabled,!!data.mqttConnected);
@@ -1127,21 +1136,58 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         .catch(function(e){if(st){st.textContent='操作失败: '+e.message;st.style.color='#e05';}});
     });
 
-    /* ---- OTA 自动升级开关 ---- */
+    /* ---- OTA 定时自动升级：开关 / 每天几点 / 升级链接 ---- */
     var oaT=document.getElementById('otaAutoToggle');
-    if(oaT)oaT.addEventListener('change',function(){
+    var oh=document.getElementById('otaHour');
+    var ou=document.getElementById('otaAutoUrl');
+    function otaSaveSettings(){
+      var p='/control?otaauto='+(oaT&&oaT.checked?1:0)+
+            '&otahour='+encodeURIComponent((oh&&oh.value)?oh.value:'4')+
+            '&otaautourl='+encodeURIComponent((ou&&ou.value)?ou.value.trim():'');
+      return fetch(p).then(function(r){return r.text();});
+    }
+    function otaShowStatus(t,ok){
       var st=document.getElementById('otaStatus');
-      var self=this;
-      fetch('/control?otaauto='+(oaT.checked?1:0))
-        .then(function(r){return r.text();})
-        .then(function(t){
-          if(st){st.textContent=t;st.style.color='#3a5';}
-        })
-        .catch(function(e){
-          if(st){st.textContent='操作失败: '+e.message;st.style.color='#e05';}
-          self.checked=!self.checked;
-        });
+      if(st){st.textContent=t;st.style.color=ok?'#3a5':'#e05';}
+    }
+    if(oaT)oaT.addEventListener('change',function(){
+      otaSaveSettings().then(function(t){otaShowStatus(t,true);})
+        .catch(function(e){otaShowStatus('操作失败: '+e.message,false);oaT.checked=!oaT.checked;});
     });
+    if(oh)oh.addEventListener('change',function(){
+      var v=parseInt(oh.value,10);
+      if(isNaN(v)||v<0||v>23){v=4;oh.value='4';}
+      otaSaveSettings().then(function(t){otaShowStatus(t,true);})
+        .catch(function(e){otaShowStatus('操作失败: '+e.message,false);});
+    });
+    if(ou)ou.addEventListener('change',function(){
+      otaSaveSettings().then(function(t){otaShowStatus(t,true);})
+        .catch(function(e){otaShowStatus('操作失败: '+e.message,false);});
+    });
+
+    /* ---- 检查更新（对比巴法云固件的"上传时间"）----
+       每次点按钮 → 固件 HEAD 巴法云链接读 Last-Modified → 网页轮询 /otacheck 拿结果。 */
+    var ocb=document.getElementById('otaCheckBtn');
+    var oci=document.getElementById('otaCheckInfo');
+    if(ocb&&oci){
+      var otaCheckBase=-1;
+      var renderCheck=function(d){
+        oci.innerHTML='远程固件上传时间: '+d.remote+'<br>当前固件: '+d.local+'<br>'+
+          (d.remote==='检查失败'?'⚠ 检查失败，稍后再试':
+           (d.same?'✓ 巴法云固件与当前一致':'⬆ 巴法云有新固件，可点「一键升级」'));
+      };
+      ocb.addEventListener('click',function(){
+        ocb.disabled=true;
+        oci.textContent='检查中...';
+        var t=setInterval(function(){
+          fetch('/otacheck',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
+            if(otaCheckBase<0)otaCheckBase=d.count;
+            renderCheck(d);
+            if(d.count>otaCheckBase){clearInterval(t);ocb.disabled=false;}
+          }).catch(function(){/* 忽略，下一轮再试 */});
+        },1000);
+      });
+    }
 
 
       document.querySelectorAll('.mode-btn').forEach(function(btn){
@@ -1943,6 +1989,8 @@ void setup() {
   loadWiFiConfig();   // 加载 WiFi 配置 + 灯珠数量（num_leds）
   loadMqttConfig();   // 加载 MQTT 配置
   loadMqttServerConfig(); // 加载 MQTT 服务器地址/端口（默认巴法云 bemfa.com:9501）
+  loadPeriphFlags();  // 加载外设开关 / OTA 定时自动升级配置（DHT11、红外、检查时间、升级链接）
+  configTime(8 * 3600, 0, "ntp.aliyun.com", "ntp1.aliyun.com");  // SNTP 对时——定时自动升级判断"每天几点"要用
 
   // 立刻初始化灯带（此时 num_leds 已确定）
   FastLED.addLeds<WS2812, LED_PIN, GRB>(leds, num_leds);
@@ -2140,13 +2188,10 @@ void loop() {
     DEBUG_PRINTLN("系统稳定运行超过5秒，快速断电计数器已清零。");
   }
 
-  // ---- OTA 自动升级（网页 OTA 卡片里开关；用固件内置默认链接=巴法云）----
-  // 开机联网稳定 60 秒后自动触发一次，本次上电只触发一次，避免循环刷机。
-  if (otaAutoEnabled && !otaAutoDone && WiFi.status() == WL_CONNECTED && millis() > 60000) {
-    otaAutoDone = true;
-    DEBUG_PRINTLN("[OTA] 自动升级触发（内置默认链接）");
-    otaPendingUrl = OTA_AUTO_URL;
-  }
+  // ---- OTA 定时自动升级（网页 OTA 卡片里开关 + 时间 + 链接）----
+  // 每天在设定的小时检查一次巴法云固件的"上传时间"（Last-Modified 头），
+  // 和当前固件记录的比对：没变 → 跳过（不会循环刷机）；变了 → 触发升级。
+  otaAutoTick();
 
   // ---- 可选外设：DHT11 温湿度（网页"灯带设置"里开关）----
   periphTick();
@@ -2157,6 +2202,10 @@ void loop() {
   if (otaPendingUrl.length() > 0) {
     String url = otaPendingUrl;
     otaPendingUrl = "";   // 先清标志，避免失败后反复重试
+    // 记下这次要刷的固件文件的上传时间（Last-Modified）——升级成功后写入 EEPROM，
+    // 之后每天定时检查时与巴法云文件头比对，没变就跳过（防循环刷机）。
+    String remoteLM = otaFetchRemoteLM(url);
+    if (remoteLM.length()) DEBUG_PRINTLN("[OTA] 远端固件上传时间: " + otaFormatLMStr(remoteLM));
     DEBUG_PRINTLN("[OTA] 开始下载固件: " + url);
 
     WiFiClient otaClient;
@@ -2181,6 +2230,7 @@ void loop() {
         break;
       case HTTP_UPDATE_OK:
         DEBUG_PRINTLN("[OTA] 升级成功，即将重启...");
+        otaSetLocalLM(remoteLM);   // 记录新固件的上传时间，之后定时检查据此判断"有无新版本"
         delay(500);
         ESP.restart();
         break;

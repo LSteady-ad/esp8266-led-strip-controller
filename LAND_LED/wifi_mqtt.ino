@@ -1576,11 +1576,48 @@ void setupWebServer() {
       request->send(200, "text/plain", irEnabled ? "红外接收已开启（接 D2/GPIO4）" : "红外接收已关闭");
       return;
     }
-    // ---- OTA 开机自动升级开关 ----
+    // ---- OTA 定时自动升级：开关 + 每天几点 + 升级链接 ----
     if (request->hasParam("otaauto")) {
       otaAutoEnabled = (request->getParam("otaauto")->value().toInt() != 0);
+      if (request->hasParam("otahour")) {
+        int h = request->getParam("otahour")->value().toInt();
+        if (h >= 0 && h <= 23) otaAutoHour = (uint8_t)h;
+      }
+      if (request->hasParam("otaautourl")) {
+        String u = request->getParam("otaautourl")->value();
+        u.trim();
+        if (u.length() == 0 || u.startsWith("http://") || u.startsWith("https://")) {
+          strlcpy(otaAutoUrl, u.c_str(), sizeof(otaAutoUrl));
+        }
+      }
       savePeriphFlags();
-      request->send(200, "text/plain", otaAutoEnabled ? "OTA 自动升级已开启（每次上电联网后自动从默认链接升级）" : "OTA 自动升级已关闭");
+      String msg = otaAutoEnabled
+        ? "已开启：每天 " + String(otaAutoHour) + " 点自动检查（固件有更新才会刷入）"
+        : "定时自动升级已关闭";
+      request->send(200, "text/plain", msg);
+      return;
+    }
+    // ---- OTA 自动检查时间（0~23 点）----
+    if (request->hasParam("otahour")) {
+      int h = request->getParam("otahour")->value().toInt();
+      if (h < 0 || h > 23) { request->send(400, "text/plain", "小时须在 0~23"); return; }
+      otaAutoHour = (uint8_t)h;
+      savePeriphFlags();
+      request->send(200, "text/plain", "自动检查时间已设为每天 " + String(h) + " 点");
+      return;
+    }
+    // ---- OTA 自动升级链接（空 = 恢复内置巴法云链接）----
+    if (request->hasParam("otaautourl")) {
+      String u = request->getParam("otaautourl")->value();
+      u.trim();
+      if (u.length() > 0 && !(u.startsWith("http://") || u.startsWith("https://"))) {
+        request->send(400, "text/plain", "链接无效，需以 http:// 或 https:// 开头");
+        return;
+      }
+      if (u.length() >= OTA_FLAGS_URL_LEN) { request->send(400, "text/plain", "链接太长"); return; }
+      strlcpy(otaAutoUrl, u.c_str(), sizeof(otaAutoUrl));
+      savePeriphFlags();
+      request->send(200, "text/plain", u.length() ? "自动升级链接已保存" : "自动升级链接已恢复为内置巴法云链接");
       return;
     }
     if (request->hasParam("savemqtt")) {
@@ -1833,6 +1870,8 @@ void setupWebServer() {
     doc["otaAuto"]      = otaAutoEnabled;
     doc["temperature"]  = dhtEnabled ? String(dhtTemperature, 1) : String("-1");
     doc["humidity"]     = dhtEnabled ? String((int)(dhtHumidity + 0.5f)) : String("-1");
+    doc["otaHour"]      = otaAutoHour;
+    doc["otaAutoUrl"]   = otaAutoUrl;
 
     doc["timerActive"] = timerActive;
     doc["timerRemaining"] = timerActive
@@ -1951,6 +1990,17 @@ void setupWebServer() {
   // ---- GET /otastatus（纯数字：OTA 进度。-2=失败 -1=空闲 0~99=下载中 100=写入Flash）----
   server.on("/otastatus", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send(200, "text/plain", String(otaProgress));
+  });
+
+  // ---- GET /otacheck（检查巴法云固件是否有更新：比对"上传时间"）----
+  // 返回 JSON：remote=远程固件上传时间 local=当前固件上传时间 same=是否一致 count=检查次数
+  server.on("/otacheck", HTTP_GET, [](AsyncWebServerRequest* request) {
+    otaCheckRequest();   // 登记检查请求（loop 里执行，3 秒节流）
+    String j = String("{\"remote\":\"") + otaRemoteTime
+             + "\",\"local\":\"" + otaLocalTime
+             + "\",\"same\":" + (otaCheckSame ? "true" : "false")
+             + ",\"count\":" + otaCheckCount + "}";
+    request->send(200, "application/json", j);
   });
 
   server.on("/ota", HTTP_GET, [](AsyncWebServerRequest* request) {

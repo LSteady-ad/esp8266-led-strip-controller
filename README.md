@@ -10,7 +10,7 @@ ESP8266 驱动的 LED 灯带控制器。一块 ESP8266、一条 WS2812 灯带，
 - **定时关闭**、**灯珠数量**（1~200 颗，写 EEPROM）、**反向显示**
 - **WiFi 管理**：多组网络按优先级自动重连，断网自动开热点进配网模式
 - **巴法云 MQTT**：接入微信小程序、语音音箱之类的外部控制
-- **OTA 一键升级**：网页里粘贴固件下载链接直接升级，不用拆机接数据线；还能开"开机自动升级"
+- **OTA 一键升级 + 定时自动升级**：网页里粘贴固件下载链接直接升级；也能开"每天定时自动升级"——每天固定时间检查一次巴法云固件的"上传时间"，有更新才刷入，不会循环刷机
 - **红外遥控**：支持常见 NEC 遥控器调模式 / 调亮度
 - **DHT11 温湿度**：网页实时显示，另有两个纯数字接口方便自己写小工具轮询
 
@@ -62,7 +62,7 @@ Arduino IDE 装好 ESP8266 core（3.1.2 版本测试通过），开发板选 **G
 | `GET /wifilist` | 已保存网络列表 JSON（含优先级顺序） |
 | `GET /favicon.ico` | 网页图标（SVG） |
 
-`/state` 里的主要字段：`mode`（当前模式）、`color`、`brightness`（0~100）、`speed`、`ledCount`、`reverse`、`solidanim`、`timerActive` / `timerRemaining`、`dhtEnabled` / `temperature` / `humidity`、`irEnabled`、`otaAuto`、`wifiConnected` / `apModeActive` / `ipAddress`、`wifiNets`（已保存网络数组）、巴法云的 `mqttEnabled` / `mqttConnected` / `mqttLastMsg` 等。
+`/state` 里的主要字段：`mode`（当前模式）、`color`、`brightness`（0~100）、`speed`、`ledCount`、`reverse`、`solidanim`、`timerActive` / `timerRemaining`、`dhtEnabled` / `temperature` / `humidity`、`irEnabled`、`otaAuto`、`otaHour`、`otaAutoUrl`、`wifiConnected` / `apModeActive` / `ipAddress`、`wifiNets`（已保存网络数组）、巴法云的 `mqttEnabled` / `mqttConnected` / `mqttLastMsg` 等。
 
 ### 灯光控制（都是 GET /control 加参数）
 
@@ -103,7 +103,9 @@ Arduino IDE 装好 ESP8266 core（3.1.2 版本测试通过），开发板选 **G
 |---|---|
 | `dhtenable=0或1` | DHT11 开关（接 D5/GPIO14） |
 | `irenable=0或1` | 红外接收开关（接 D2/GPIO4） |
-| `otaauto=0或1` | 开机自动升级开关（用固件内置的巴法云默认链接） |
+| `otaauto=0或1` | 每天定时自动升级开关（链接见下） |
+| `otahour=0~23` | 每天自动检查的小时（默认 4 点） |
+| `otaautourl=链接` | 自动升级用的固件链接（留空 = 内置巴法云链接） |
 
 ### OTA 升级
 
@@ -111,6 +113,9 @@ Arduino IDE 装好 ESP8266 core（3.1.2 版本测试通过），开发板选 **G
 |---|---|
 | `GET /ota?url=固件.bin的链接` | 提交升级，返回"开始升级"；固件在后台下载写入，成功自动重启，失败回退 |
 | `GET /otastatus` | 纯数字进度：`-2`=失败已回退，`-1`=空闲，`0~99`=下载中，`100`=写入 Flash |
+| `GET /otacheck` | 检查更新 JSON：`remote`（远程固件上传时间）、`local`（当前固件上传时间）、`same`（是否一致）、`count`（检查次数） |
+
+定时自动升级的原理：每天设定的小时（默认 4 点）用 HEAD 请求读巴法云固件的 `Last-Modified` 响应头（就是巴法云 OTA 页面显示的"上传时间"），和 EEPROM 里记录的当前固件上传时间比对——**相同就跳过，不同才刷入**，所以不会陷入"升级→重启→又升级"的循环。升级成功后会把新的上传时间写入 EEPROM。网页 OTA 卡片里的「检查更新」按钮走的也是同一套比对。
 
 ### 其它小接口
 

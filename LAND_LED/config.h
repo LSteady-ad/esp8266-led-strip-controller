@@ -357,19 +357,31 @@ struct MqttServerConfig {
 static const int MQTT_SERVER_EEPROM_ADDR = WIFI_LIST_EEPROM_ADDR + sizeof(WiFiList);
 
 /**
- * 可选外设开关 / OTA 自动升级开关 的存储地址（追加在 MQTT 服务器配置之后）。
- * 存储格式 2 字节：[魔数 0xA5][位标志]。空白 Flash 读出 0xFF 与魔数不符
- * → 视为未初始化 → 写入默认值（DHT11 关、红外开、OTA 自动升级关，与老版本行为一致）。
- * 位定义：bit0=DHT11 温湿度  bit1=红外接收  bit2=OTA 开机自动升级
+ * 可选外设开关 / OTA 定时自动升级 的存储区域（追加在 MQTT 服务器配置之后）。
+ * 布局（共 163 字节）：
+ *   [0]      魔数 0xA5
+ *   [1]      位标志：bit0=DHT11  bit1=红外接收  bit2=OTA 定时自动升级
+ *   [2]      每天自动检查升级的小时（0~23，0xFF=未设置 → 默认 OTA_AUTO_HOUR_DEFAULT）
+ *   [3~34]   当前固件对应 bin 的 Last-Modified 原始串（32B，全 0xFF/0x00 = 未知）
+ *            自动检查时与巴法云文件头里的 Last-Modified（即 OTA 页面的"上传时间"）
+ *            比对：相同 → 跳过升级（防止循环刷机）；不同 → 有新版本，触发升级
+ *   [35~162] 自动升级固件链接（128B，空 = 使用内置 OTA_AUTO_URL）
  */
 static const int OTA_FLAGS_EEPROM_ADDR = MQTT_SERVER_EEPROM_ADDR + sizeof(MqttServerConfig);
 #define OTA_FLAGS_MAGIC    0xA5
 #define PERIPH_FLAG_DHT    0x01
 #define PERIPH_FLAG_IR     0x02
 #define PERIPH_FLAG_OTA    0x04
+#define OTA_FLAGS_HOUR_OFF 2
+#define OTA_FLAGS_LM_LEN   32
+#define OTA_FLAGS_LM_OFF   3
+#define OTA_FLAGS_URL_OFF  35
+#define OTA_FLAGS_URL_LEN  128
+#define OTA_FLAGS_TOTAL    163
+#define OTA_AUTO_HOUR_DEFAULT 4
 
 /** EEPROM 总大小（WiFi配置 + 灯珠 + 反向 + 断电计数 + MQTT配置 + WiFi列表 + MQTT服务器） */
-#define EEPROM_SIZE (sizeof(WiFiConfig) + sizeof(uint16_t) + 1 + 1 + sizeof(MqttConfig) + sizeof(WiFiList) + sizeof(MqttServerConfig) + 2)
+#define EEPROM_SIZE (sizeof(WiFiConfig) + sizeof(uint16_t) + 1 + 1 + sizeof(MqttConfig) + sizeof(WiFiList) + sizeof(MqttServerConfig) + OTA_FLAGS_TOTAL)
 
 // ============================================================
 // 调试串口开关
@@ -456,6 +468,12 @@ extern bool          otaAutoEnabled;  ///< OTA 开机自动升级是否启用
 extern float         dhtTemperature;  ///< 最近一次成功读取的温度（℃）
 extern float         dhtHumidity;     ///< 最近一次成功读取的湿度（%）
 extern volatile int  otaProgress;     ///< OTA 进度：-1空闲 -2失败 0~99下载中 100写入Flash（/otastatus 返回）
+extern uint8_t       otaAutoHour;     ///< 每天自动检查升级的小时（0~23）
+extern char          otaAutoUrl[129]; ///< 自动升级固件链接（存 EEPROM，空 = 内置 OTA_AUTO_URL）
+extern char          otaRemoteTime[33]; ///< 最近一次检查到的远程固件上传时间（网页显示用）
+extern char          otaLocalTime[33];  ///< 当前固件对应 bin 的上传时间（网页显示用）
+extern bool          otaCheckSame;    ///< 远程固件与当前固件是否同一版本
+extern unsigned int  otaCheckCount;   ///< 检查更新完成的次数（网页轮询判断新结果用）
 extern bool          apTempEnabled;  ///< 热点当前是"自动/强制"开的（非用户勾选「AP模式」）
 extern bool          wifiSwitchNow;  ///< 置位后 loop 立即切换到当前选中(active)的 WiFi 网络
 extern WiFiClient    espClient;      ///< WiFi TCP 客户端
@@ -519,6 +537,12 @@ bool saveMqttServerConfig(); ///< 将 MQTT 服务器地址/端口写入 EEPROM �
 void loadPeriphFlags();  ///< 加载外设/OTA自动升级开关（未初始化时写默认值）
 bool savePeriphFlags();  ///< 将外设/OTA自动升级开关写入 EEPROM 并回读校验
 void periphTick();       ///< 外设轮询（loop 里调用：DHT11 每 2 秒读一次）
+void otaAutoTick();      ///< 定时自动升级：每天固定小时检查一次，有新版本才刷入
+void otaCheckRequest();  ///< 网页"检查更新"：登记一次检查请求（loop 里执行，3 秒节流）
+String otaGetLocalTimeStr(); ///< 当前固件上传时间的显示串（无记录时返回"(未知)"）
+void otaSetLocalLM(const String& lm);
+String otaFetchRemoteLM(const String& url); ///< HEAD 固件链接，取 Last-Modified 原始串（失败返回空） ///< 记录"当前固件对应 bin 的上传时间"（升级成功后调用）
+String otaFormatLMStr(const String& raw); ///< Last-Modified 原始串 → "2026-11-14 19:44:29" 显示串
 int  connectToWiFi(int wifiStartLed, int wifiEndLed);
 void setupWebServer();
 void manageWiFiConnection();  ///< 运行时动态 AP 管理 + 断网多网络轮询重连（loop 中调用）
