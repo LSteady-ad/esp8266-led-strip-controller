@@ -470,10 +470,13 @@ extern bool          otaAutoEnabled;  ///< OTA 定时自动检查升级是否启
 extern float         dhtTemperature;  ///< 最近一次成功读取的温度（℃）
 extern float         dhtHumidity;     ///< 最近一次成功读取的湿度（%）
 extern volatile int  otaProgress;     ///< OTA 进度：-1空闲 -2失败 0~99下载中 100写入Flash（/otastatus 返回）
-extern char          otaOpenID[33];     ///< 巴法云用户私钥（openID，网页可填，OTA 检查用）
 extern uint32_t      otaLastUnix;       ///< 当前固件的"上传时间"戳（升级成功后记录）
 extern uint32_t      otaLastVersion;    ///< 当前固件版本号（升级成功后记录）
-extern char          otaRemoteInfo[96]; ///< 最近一次检查到的远程固件信息（网页显示用）
+extern char          otaLastDate[24];   ///< 当前固件的上传日期（显示用）
+extern uint32_t      otaRemoteVer;      ///< 远程固件版本号（最近一次检查）
+extern char          otaRemoteDate[24]; ///< 远程固件上传日期（显示用）
+extern uint32_t      otaRemoteSize;     ///< 远程固件大小（字节）
+extern bool          otaRemoteOk;       ///< 最近一次检查是否成功
 extern bool          otaHasNew;         ///< 远程是否有新版本
 extern bool          otaCheckNow;       ///< 网页"立即检查并升级"触发的标志（loop 消费）
 extern bool          otaCheckReq;       ///< 网页查看检查信息触发的标志（loop 消费）
@@ -543,6 +546,7 @@ void periphTick();       ///< 外设轮询（loop 里调用：DHT11 每 2 秒读
 void otaAutoTick();           ///< 定时自动检查升级：间隔到点调巴法云 API，有新版本直接刷入
 void otaCheckRequest();       ///< 网页"立即检查并升级"：登记请求（loop 里执行）
 void otaSyncVersionFromApi(); ///< 升级成功后同步一次版本号/上传时间到 EEPROM
+String otaFormatUnixStr(uint32_t ux); ///< unix 时间戳 → 北京时间显示串
 void otaCheckBemfa(bool allowUpgrade); ///< 调巴法云 firmwareVersion 接口比对版本，allowUpgrade=true 时直接刷入
 int  connectToWiFi(int wifiStartLed, int wifiEndLed);
 void setupWebServer();

@@ -25,10 +25,13 @@ static bool          dhtInited   = false;
 // ---- OTA ----
 bool     otaAutoEnabled = false;                    ///< 定时自动检查升级是否启用
 uint16_t otaIntervalMin = OTA_AUTO_INTERVAL_DEFAULT; ///< 自动检查间隔（分钟，默认 240）
-char     otaOpenID[33]  = "";                       ///< 巴法云用户私钥（网页可填）
 uint32_t otaLastUnix    = 0;                        ///< 当前固件的"上传时间"戳（升级成功后记录）
 uint32_t otaLastVersion = 0;                        ///< 当前固件版本号
-char     otaRemoteInfo[96] = "";                    ///< 最近一次检查到的远程固件信息（网页显示用）
+uint32_t otaRemoteVer   = 0;                        ///< 远程固件版本号（最近一次检查）
+char     otaRemoteDate[24] = "";                    ///< 远程固件上传日期（显示用）
+uint32_t otaRemoteSize  = 0;                        ///< 远程固件大小（字节）
+bool     otaRemoteOk    = false;                    ///< 最近一次检查是否成功
+char     otaLastDate[24] = "";                      ///< 当前固件的上传日期（显示用）
 bool     otaHasNew    = false;                      ///< 远程是否有新版本
 bool     otaCheckNow  = false;                      ///< 网页"立即检查并升级"触发的标志
 static unsigned long otaAutoLastRun = 0;           ///< 上次自动检查的时间戳（0 = 开机后还没查过）
@@ -48,8 +51,6 @@ void loadPeriphFlags() {
   uint8_t  flags    = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + 1);
   uint16_t interval = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF)
                     | ((uint16_t)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF + 1) << 8);
-  char     oidBuf[OTA_FLAGS_OID_LEN + 1] = {0};
-  for (int i = 0; i < OTA_FLAGS_OID_LEN; i++) oidBuf[i] = (char)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_OID_OFF + i);
   uint32_t lastU = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_UNIX_OFF)
                  | ((uint32_t)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_UNIX_OFF + 1) << 8)
                  | ((uint32_t)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_UNIX_OFF + 2) << 16)
@@ -65,10 +66,9 @@ void loadPeriphFlags() {
     bool inherit = (magic == OTA_FLAGS_MAGIC_V2 || magic == 0xA5);
     dhtEnabled     = inherit && (flags & PERIPH_FLAG_DHT) != 0;
     irEnabled      = inherit ? (flags & PERIPH_FLAG_IR) != 0 : true;
-    otaAutoEnabled = inherit && (flags & PERIPH_FLAG_OTA) != 0;
+    otaAutoEnabled = inherit ? ((flags & PERIPH_FLAG_OTA) != 0) : true;   // 全新设备默认巴法云模式
     otaIntervalMin = (inherit && interval >= 1 && interval <= 65535)
                      ? interval : OTA_AUTO_INTERVAL_DEFAULT;
-    strlcpy(otaOpenID, "", sizeof(otaOpenID));
     otaLastUnix = 0;
     otaLastVersion = 0;
     savePeriphFlags();
@@ -81,13 +81,9 @@ void loadPeriphFlags() {
   otaAutoEnabled = (flags & PERIPH_FLAG_OTA) != 0;
   otaIntervalMin = (interval >= 1 && interval <= 65535) ? interval : OTA_AUTO_INTERVAL_DEFAULT;
 
-  bool oidOk = (oidBuf[0] != '\0' && oidBuf[0] != (char)0xFF);
-  for (int i = 0; oidOk && i < OTA_FLAGS_OID_LEN && oidBuf[i]; i++) {
-    if ((uint8_t)oidBuf[i] < 0x20 || (uint8_t)oidBuf[i] > 0x7E) oidOk = false;
-  }
-  strlcpy(otaOpenID, oidOk ? oidBuf : "", sizeof(otaOpenID));
   otaLastUnix    = (lastU != 0xFFFFFFFF) ? lastU : 0;
   otaLastVersion = (lastV != 0xFFFFFFFF) ? lastV : 0;
+  strlcpy(otaLastDate, (otaLastUnix ? otaFormatUnixStr(otaLastUnix) : String("(未知)")).c_str(), sizeof(otaLastDate));
 
   DEBUG_PRINT("[外设] DHT11: ");
   DEBUG_PRINT(dhtEnabled ? "开" : "关");
@@ -115,10 +111,6 @@ bool savePeriphFlags() {
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR + 1, flags);
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF, otaIntervalMin & 0xFF);
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF + 1, (otaIntervalMin >> 8) & 0xFF);
-  for (int i = 0; i < OTA_FLAGS_OID_LEN; i++) {
-    char c = (i < (int)strlen(otaOpenID)) ? otaOpenID[i] : 0;
-    EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_OID_OFF + i, c);
-  }
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_UNIX_OFF, otaLastUnix & 0xFF);
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_UNIX_OFF + 1, (otaLastUnix >> 8) & 0xFF);
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_UNIX_OFF + 2, (otaLastUnix >> 16) & 0xFF);
@@ -260,14 +252,15 @@ void otaCheckRequest() {
  *
  * 接口为 HTTPS，用 setInsecure() 跳过证书校验（巴法云 API 无固定证书）。
  */
-static bool otaQueryApi(uint32_t& ver, uint32_t& unixT, String& url) {
-  if (otaOpenID[0] == '\0' || mqttConfig.topic[0] == '\0') return false;
+static bool otaQueryApi(uint32_t& ver, uint32_t& unixT, String& url, uint32_t& size) {
+  // 巴法云 openID 就是 MQTT 设备私钥（Client ID），直接复用配置，不用单独填
+  if (mqttConfig.clientId[0] == '\0' || mqttConfig.topic[0] == '\0') return false;
 
   WiFiClientSecure sec;
   sec.setInsecure();   // 不校验证书链（设备侧常规做法）
   HTTPClient http;
   String api = String("https://apis.bemfa.com/vb/api/v1/firmwareVersion?openID=")
-             + otaOpenID + "&topic=" + mqttConfig.topic + "&deviceType=1";
+             + mqttConfig.clientId + "&topic=" + mqttConfig.topic + "&deviceType=1";
   if (!http.begin(sec, api)) return false;
   int code = http.GET();
   bool ok = false;
@@ -278,6 +271,7 @@ static bool otaQueryApi(uint32_t& ver, uint32_t& unixT, String& url) {
         ver   = (uint32_t)(doc["data"]["version"] | 0);
         unixT = (uint32_t)(doc["data"]["unix"] | 0);
         url   = String((const char*)(doc["data"]["url"] | ""));
+        size  = (uint32_t)(doc["data"]["size"] | 0);
         ok = true;
       }
     }
@@ -295,14 +289,16 @@ static bool otaQueryApi(uint32_t& ver, uint32_t& unixT, String& url) {
  * 把远程版本登记为基准并显示"已是最新"，避免误报。
  */
 void otaCheckBemfa(bool allowUpgrade) {
-  uint32_t ver, ux;
+  uint32_t ver, ux, sz;
   String url;
-  if (!otaQueryApi(ver, ux, url)) {
-    strlcpy(otaRemoteInfo, "检查失败", sizeof(otaRemoteInfo));
+  if (!otaQueryApi(ver, ux, url, sz)) {
+    otaRemoteOk = false;
     return;
   }
-  snprintf(otaRemoteInfo, sizeof(otaRemoteInfo), "v%lu（上传时间 %s）",
-           (unsigned long)ver, otaFormatUnixStr(ux).c_str());
+  otaRemoteOk   = true;
+  otaRemoteVer  = ver;
+  otaRemoteSize = sz;
+  strlcpy(otaRemoteDate, otaFormatUnixStr(ux).c_str(), sizeof(otaRemoteDate));
 
   // 没有基准 → 首次登记，不算"有新版本"
   if (otaLastUnix == 0) {
@@ -348,11 +344,12 @@ void otaAutoTick() {
  * @brief 升级成功（重启前）调用：同步一次最新版本号/上传时间到 EEPROM。
  */
 void otaSyncVersionFromApi() {
-  uint32_t ver, ux;
+  uint32_t ver, ux, sz;
   String url;
-  if (otaQueryApi(ver, ux, url)) {
+  if (otaQueryApi(ver, ux, url, sz)) {
     otaLastVersion = ver;
     otaLastUnix    = ux;
+    strlcpy(otaLastDate, otaFormatUnixStr(ux).c_str(), sizeof(otaLastDate));
     savePeriphFlags();
     DEBUG_PRINTLN("[OTA] 已记录当前固件版本 v" + String(ver));
   }

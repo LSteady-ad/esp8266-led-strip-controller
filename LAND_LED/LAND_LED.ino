@@ -323,15 +323,22 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 </div></div></section>
 <section class="p accordion-panel"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">🔄 OTA 升级</span><span class="tg i" id="otaVersionTag">固件</span></div>
 <div class="pb accordion-body"><div class="in">
-  <div class="st">巴法云私钥 openID（控制台右上角可查）</div>
-  <div class="row"><input type="text" id="otaOpenID" style="flex:1" placeholder="填入后才能自动检查升级"></div>
-  <div class="row"><span style="flex:1">🔄 每 <input type="number" id="otaInterval" min="1" value="240" style="width:64px"> 分钟自动检查升级</span>
-  <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="otaAutoToggle" checked><span class="tr"></span></label></div></div>
-  <div class="row"><button class="btn g p" id="otaCheckBtn" style="width:100%">⬆️ 立即检查并升级</button></div>
-  <div class="cs" id="otaCheckInfo">尚未检查</div>
+  <div class="row">
+    <div class="chk on" id="otaModeBemfa"><span class="bx"></span><span>☁ 巴法云升级</span></div>
+    <div class="chk" id="otaModeManual"><span class="bx"></span><span>✍ 手动升级</span></div>
+  </div>
+  <div id="otaBemfaBox">
+    <div class="row"><span style="flex:1">🔄 每 <input type="number" id="otaInterval" min="1" value="240" style="width:64px"> 分钟自动检查升级</span></div>
+    <div class="cs" id="otaCheckInfo">尚未检查</div>
+    <div class="row"><button class="btn g p" id="otaCheckBtn" style="width:100%">⬆ 一键升级</button></div>
+  </div>
+  <div id="otaManualBox" style="display:none">
+    <div class="st">固件下载链接</div>
+    <div class="row"><input type="text" id="otaUrl" style="flex:1" placeholder="http://bin.bemfa.com/b/253904/1BcOTllNTViNDMwN2U3NDA2ZDhjOGVjZjM5MTIyYmRkODk=xuexiaoden002.bin"></div>
+    <div class="row"><button class="btn g p" id="otaUpgrade" style="width:100%">⬆ 一键升级</button></div>
+  </div>
   <div class="cs" id="otaStatus"></div>
   <div class="opwrap" id="otaBarWrap" style="display:none"><div class="opbar" id="otaBar"></div></div>
-  <div class="hint">开启自动检查后，巴法云固件有新版本会自动下载重启（默认每 240 分钟检查一次）；「立即检查并升级」手动触发同样效果。升级过程请勿断电，失败自动回退到当前固件。</div>
 </div></div></section>
 <section class="p accordion-panel skin-panel"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">🎨 界面皮肤</span><span class="tg" id="skinName">新粗野</span></div>
 <div class="pb accordion-body"><div class="in">
@@ -994,14 +1001,22 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         if(_mp&&document.activeElement!==_mp)_mp.value=data.mqttPort||'';
         document.getElementById('dhtToggle').checked=!!data.dhtEnabled;
         document.getElementById('irToggle').checked=!!data.irEnabled;
-        var _oa=document.getElementById('otaAutoToggle');
-        if(_oa)_oa.checked=!!data.otaAuto;
         var _oi=document.getElementById('otaInterval');
         if(_oi&&document.activeElement!==_oi)_oi.value=data.otaInterval||240;
-        var _oid=document.getElementById('otaOpenID');
-        if(_oid&&document.activeElement!==_oid)_oid.value=data.otaOpenID||'';
+        var _ob=document.getElementById('otaBemfaBox');
+        var _omm=document.getElementById('otaManualBox');
+        var _mb=document.getElementById('otaModeBemfa');
+        var _mm=document.getElementById('otaModeManual');
+        if(_ob)_ob.style.display=data.otaAuto?'':'none';
+        if(_omm)_omm.style.display=data.otaAuto?'none':'';
+        if(_mb)_mb.classList.toggle('on',!!data.otaAuto);
+        if(_mm)_mm.classList.toggle('on',!data.otaAuto);
         var _oci=document.getElementById('otaCheckInfo');
-        if(_oci)_oci.innerHTML='远程固件: '+(data.otaRemoteInfo||'未知')+'<br>当前固件: v'+(data.otaLastVersion||'?');
+        if(_oci){
+          var _cur='当前固件: v'+(data.otaLastVersion||'?')+'（'+(data.otaLastDate||'-')+'）';
+          if(!data.otaRemoteOk)_oci.innerHTML='远程固件: 检查失败（确认 MQTT 的 Client ID 与网络）<br>'+_cur;
+          else _oci.innerHTML='远程固件: v'+data.otaRemoteVer+'（'+Math.round((data.otaRemoteSize||0)/1024)+' KB）'+(data.otaHasNew?'　⬆ 有新版本':'　已是最新')+'<br>更新日期: '+(data.otaRemoteDate||'-')+'<br>'+_cur;
+        }
         updateDhtDisplay(data);
         document.getElementById('mqttToggle').checked=!!data.mqttEnabled;
         updateMqttToggleStatus(!!data.mqttEnabled,!!data.mqttConnected);
@@ -1031,73 +1046,112 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
       setTimeout(startWifiScan,400);
 
       
-    /* ---- OTA：定时自动检查升级（巴法云 firmwareVersion API）----
-       自动模式开启时，每隔设定分钟比对一次固件版本，有新版本直接下载重启；
-       「⬆️ 立即检查并升级」手动触发同样的检查，进度走 /otastatus。 */
-    var oaT=document.getElementById('otaAutoToggle');
+    /* ---- OTA：两种模式（巴法云升级 / 手动升级）----
+       巴法云：按间隔调 API 检查版本，有新版本自动刷入；「一键升级」= 立即检查。
+       手动：填固件下载链接，点「一键升级」直接刷。 */
+    var otaMB=document.getElementById('otaModeBemfa');
+    var otaMM=document.getElementById('otaModeManual');
+    var otaBoxB=document.getElementById('otaBemfaBox');
+    var otaBoxM=document.getElementById('otaManualBox');
     var oi=document.getElementById('otaInterval');
     var ocb=document.getElementById('otaCheckBtn');
     var oci=document.getElementById('otaCheckInfo');
+    var otaUrlEl=document.getElementById('otaUrl');
+    var otaBtn=document.getElementById('otaUpgrade');
+    var otaSt=document.getElementById('otaStatus');
     var otaBarWrap=document.getElementById('otaBarWrap');
     var otaBar=document.getElementById('otaBar');
+    var otaModeIsBemfa=true;
     function otaBarSet(pct){ if(otaBar)otaBar.style.width=pct+'%'; }
-    function otaShowStatus(t,ok){
-      var st=document.getElementById('otaStatus');
-      if(st){st.textContent=t;st.style.color=ok?'#3a5':'#e05';}
+    function otaShowStatus(t,ok){ if(otaSt){otaSt.textContent=t;otaSt.style.color=ok?'#3a5':'#e05';} }
+    function otaApplyMode(bemfa){
+      otaModeIsBemfa=bemfa;
+      if(otaBoxB)otaBoxB.style.display=bemfa?'':'none';
+      if(otaBoxM)otaBoxM.style.display=bemfa?'none':'';
+      if(otaMB)otaMB.classList.toggle('on',bemfa);
+      if(otaMM)otaMM.classList.toggle('on',!bemfa);
     }
-    function otaSaveSettings(){
-      var p='/control?otaauto='+(oaT&&oaT.checked?1:0)+
-            '&otainterval='+encodeURIComponent((oi&&oi.value)?oi.value:'240');
+    function otaInfo(d){
+      if(!oci)return;
+      var cur='当前固件: v'+(d.otaLastVersion||'?')+'（'+(d.otaLastDate||'-')+'）';
+      if(!d.otaRemoteOk){oci.innerHTML='远程固件: 检查失败（确认 MQTT 的 Client ID 与网络）<br>'+cur;return;}
+      oci.innerHTML='远程固件: v'+d.otaRemoteVer+'（'+Math.round((d.otaRemoteSize||0)/1024)+' KB）'+
+        (d.otaHasNew?'　⬆ 有新版本':'　已是最新')+
+        '<br>更新日期: '+(d.otaRemoteDate||'-')+'<br>'+cur;
+    }
+    function otaSaveMode(bemfa){
+      var p='/control?otaauto='+(bemfa?1:0);
+      if(bemfa&&oi)p+='&otainterval='+encodeURIComponent(oi.value||'240');
       return fetch(p).then(function(r){return r.text();});
     }
-    if(oaT)oaT.addEventListener('change',function(){
-      otaSaveSettings().then(function(t){otaShowStatus(t,true);})
-        .catch(function(e){otaShowStatus('操作失败: '+e.message,false);oaT.checked=!oaT.checked;});
+    if(otaMB)otaMB.addEventListener('click',function(){
+      otaApplyMode(true);
+      otaSaveMode(true).then(function(t){otaShowStatus(t,true);})
+        .catch(function(e){otaShowStatus('操作失败: '+e.message,false);});
+    });
+    if(otaMM)otaMM.addEventListener('click',function(){
+      otaApplyMode(false);
+      otaSaveMode(false).then(function(t){otaShowStatus(t,true);})
+        .catch(function(e){otaShowStatus('操作失败: '+e.message,false);});
     });
     if(oi)oi.addEventListener('change',function(){
       var v=parseInt(oi.value,10);
       if(isNaN(v)||v<1||v>65535){v=240;oi.value='240';}
-      otaSaveSettings().then(function(t){otaShowStatus(t,true);})
+      if(otaModeIsBemfa)otaSaveMode(true).then(function(t){otaShowStatus(t,true);})
         .catch(function(e){otaShowStatus('操作失败: '+e.message,false);});
     });
+    /* 巴法云模式：一键升级 = 立即检查，有新版本直接刷 */
     if(ocb&&oci){
-      var poll=null,sawProgress=false;
-      var otaInfo=function(d){
-        oci.innerHTML='远程固件: '+(d.otaRemoteInfo||'未知')+'<br>当前固件: v'+(d.otaLastVersion||'?');
-      };
+      var otaPoll=null,otaSaw=false;
       ocb.addEventListener('click',function(){
-        ocb.disabled=true;sawProgress=false;
+        ocb.disabled=true;otaSaw=false;
         if(otaBarWrap)otaBarWrap.style.display='';
         otaBarSet(0);
-        fetch('/control?otachecknow=1').then(function(r){return r.text();}).then(function(t){
-          oci.textContent=t;
-        }).catch(function(e){oci.textContent='操作失败: '+e.message;});
-        poll=setInterval(function(){
+        fetch('/control?otachecknow=1').then(function(r){return r.text();}).then(function(t){oci.textContent=t;})
+          .catch(function(e){oci.textContent='操作失败: '+e.message;});
+        otaPoll=setInterval(function(){
           fetch('/otastatus',{cache:'no-store'}).then(function(r){return r.text();}).then(function(v){
             var p=parseInt(v,10);
-            if(p===-2){oci.textContent='✗ 升级失败，设备已回退';otaShowStatus('升级失败',false);ocb.disabled=false;clearInterval(poll);if(otaBarWrap)otaBarWrap.style.display='none';return;}
-            if(p>=100){sawProgress=true;otaBarSet(100);oci.textContent='下载完成，正在写入 Flash（请勿断电）…';return;}
-            if(p>=0){sawProgress=true;otaBarSet(Math.max(p,3));oci.textContent='正在下载固件 '+p+'%…';return;}
-            if(sawProgress&&p===-1){
-              fetch('/state',{cache:'no-store'}).then(function(r){ if(!r.ok)throw 0; return r.json(); }).then(function(d){
-                otaInfo(d);
-                ocb.disabled=false;clearInterval(poll);
+            if(p===-2){oci.textContent='✗ 升级失败，设备已回退';ocb.disabled=false;clearInterval(otaPoll);if(otaBarWrap)otaBarWrap.style.display='none';return;}
+            if(p>=100){otaSaw=true;otaBarSet(100);oci.textContent='下载完成，正在写入 Flash（请勿断电）…';return;}
+            if(p>=0){otaSaw=true;otaBarSet(Math.max(p,3));oci.textContent='正在下载固件 '+p+'%…';return;}
+            if(otaSaw&&p===-1){
+              fetch('/state',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(d){
+                otaInfo(d);ocb.disabled=false;clearInterval(otaPoll);
                 if(otaBarWrap)otaBarWrap.style.display='none';
-                oci.innerHTML+='　✓ 升级完成';
-              }).catch(function(){/* 重启中，下一轮再试 */});
+                oci.innerHTML+='<br>✓ 升级完成';
+              }).catch(function(){});
               return;
             }
-            /* 检查完成但没有新版本：/state 会显示远程信息 */
-            fetch('/state',{cache:'no-store'}).then(function(r){ if(!r.ok)throw 0; return r.json(); }).then(function(d){
-              if(d.otaRemoteInfo&&d.otaRemoteInfo!=='尚未检查'){
-                otaInfo(d);
-                ocb.disabled=false;clearInterval(poll);
-                if(otaBarWrap)otaBarWrap.style.display='none';
-                if(d.otaHasNew)oci.innerHTML+='<br>⬆ 有新版本，正在自动升级…';
-              }
+            fetch('/state',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json();}).then(function(d){
+              otaInfo(d);ocb.disabled=false;clearInterval(otaPoll);
+              if(otaBarWrap)otaBarWrap.style.display='none';
+              if(d.otaHasNew)oci.innerHTML+='<br>⬆ 已触发升级…';
             }).catch(function(){});
-          }).catch(function(){/* 设备忙，继续轮询 */});
+          }).catch(function(){});
         },1000);
+      });
+    }
+    /* 手动模式：输入链接一键升级 */
+    if(otaBtn){
+      otaBtn.addEventListener('click',function(){
+        var u=(otaUrlEl&&otaUrlEl.value||'').trim();
+        if(u==='')u=OTA_DEFAULT_URL;
+        if(!/^https?:\/\//i.test(u)){otaShowStatus('链接无效，需以 http:// 或 https:// 开头',false);return;}
+        otaBtn.disabled=true;
+        fetch('/ota?'+new URLSearchParams({url:u})).then(function(r){return r.text();}).then(function(t){
+          otaShowStatus(t,true);
+          if(otaBarWrap)otaBarWrap.style.display='';
+          otaBarSet(0);
+          var mp=setInterval(function(){
+            fetch('/otastatus',{cache:'no-store'}).then(function(r){return r.text();}).then(function(v){
+              var p=parseInt(v,10);
+              if(p===-2){otaShowStatus('✗ 升级失败，设备已回退',false);clearInterval(mp);otaBtn.disabled=false;if(otaBarWrap)otaBarWrap.style.display='none';return;}
+              if(p>=100){otaBarSet(100);otaShowStatus('写入 Flash 中（请勿断电）…',true);return;}
+              if(p>=0){otaBarSet(Math.max(p,3));otaShowStatus('正在下载 '+p+'%…',true);return;}
+            }).catch(function(){});
+          },1000);
+        }).catch(function(e){otaShowStatus('升级请求失败: '+e.message,false);otaBtn.disabled=false;});
       });
     }
 

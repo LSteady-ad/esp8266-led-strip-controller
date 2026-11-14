@@ -1595,16 +1595,6 @@ void setupWebServer() {
       request->send(200, "text/plain", "自动检查间隔已设为每 " + String(v) + " 分钟");
       return;
     }
-    // ---- 巴法云私钥 openID（OTA 检查用）----
-    if (request->hasParam("otaopenid")) {
-      String k = request->getParam("otaopenid")->value();
-      k.trim();
-      if (k.length() >= OTA_FLAGS_OID_LEN) { request->send(400, "text/plain", "openID 太长"); return; }
-      strlcpy(otaOpenID, k.c_str(), sizeof(otaOpenID));
-      savePeriphFlags();
-      request->send(200, "text/plain", k.length() ? "openID 已保存" : "openID 已清空");
-      return;
-    }
     // ---- 立即检查并升级（有新版本自动刷入）----
     if (request->hasParam("otachecknow")) {
       otaCheckNow = true;
@@ -1861,8 +1851,13 @@ void setupWebServer() {
     doc["otaAuto"]      = otaAutoEnabled;
     doc["temperature"]  = dhtEnabled ? String(dhtTemperature, 1) : String("-1");
     doc["humidity"]     = dhtEnabled ? String((int)(dhtHumidity + 0.5f)) : String("-1");
-    doc["otaOpenID"]    = otaOpenID;
-    doc["otaRemoteInfo"] = otaRemoteInfo;
+    doc["otaLastVersion"] = otaLastVersion;
+    doc["otaLastDate"]    = otaLastDate;
+    doc["otaRemoteVer"]   = otaRemoteVer;
+    doc["otaRemoteDate"]  = otaRemoteDate;
+    doc["otaRemoteSize"]  = otaRemoteSize;
+    doc["otaRemoteOk"]    = otaRemoteOk;
+    doc["otaHasNew"]      = otaHasNew;
 
     doc["timerActive"] = timerActive;
     doc["timerRemaining"] = timerActive
@@ -1986,9 +1981,12 @@ void setupWebServer() {
   // ---- GET /otacheck（OTA 检查信息：当前固件版本 vs 巴法云远程固件）----
   server.on("/otacheck", HTTP_GET, [](AsyncWebServerRequest* request) {
     otaCheckRequest();   // 登记检查请求（loop 里执行，避免在异步回调里做网络请求）
-    String j = String("{\"local\":\"v") + otaLastVersion
-             + "\",\"remote\":\"" + otaRemoteInfo
-             + "\",\"hasNew\":" + (otaHasNew ? "true" : "false") + "}";
+    String j = String("{\"local\":") + otaLastVersion
+             + ",\"remote\":" + otaRemoteVer
+             + ",\"remoteDate\":\"" + otaRemoteDate
+             + "\",\"remoteSize\":" + otaRemoteSize
+             + ",\"ok\":" + (otaRemoteOk ? "true" : "false")
+             + ",\"hasNew\":" + (otaHasNew ? "true" : "false") + "}";
     request->send(200, "application/json", j);
   });
 
