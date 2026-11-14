@@ -1580,8 +1580,8 @@ void setupWebServer() {
     if (request->hasParam("otaauto")) {
       otaAutoEnabled = (request->getParam("otaauto")->value().toInt() != 0);
       if (request->hasParam("otainterval")) {
-        int h = request->getParam("otainterval")->value().toInt();
-        if (h >= 1 && h <= 255) otaIntervalH = (uint8_t)h;
+        int v = request->getParam("otainterval")->value().toInt();
+        if (v >= 1 && v <= 65535) otaIntervalMin = (uint16_t)v;
       }
       if (request->hasParam("otaautourl")) {
         String u = request->getParam("otaautourl")->value();
@@ -1592,18 +1592,18 @@ void setupWebServer() {
       }
       savePeriphFlags();
       String msg = otaAutoEnabled
-        ? "已开启：每 " + String(otaIntervalH) + " 小时自动检查一次（固件有更新才会刷入）"
+        ? "已开启：每 " + String(otaIntervalMin) + " 分钟自动检查一次"
         : "定时自动升级已关闭";
       request->send(200, "text/plain", msg);
       return;
     }
-    // ---- OTA 自动检查间隔（小时）----
+    // ---- OTA 自动检查间隔（分钟）----
     if (request->hasParam("otainterval")) {
-      int h = request->getParam("otainterval")->value().toInt();
-      if (h < 1 || h > 255) { request->send(400, "text/plain", "间隔须为 1~255 小时"); return; }
-      otaIntervalH = (uint8_t)h;
+      int v = request->getParam("otainterval")->value().toInt();
+      if (v < 1 || v > 65535) { request->send(400, "text/plain", "间隔须为 1~65535 分钟"); return; }
+      otaIntervalMin = (uint16_t)v;
       savePeriphFlags();
-      request->send(200, "text/plain", "自动检查间隔已设为每 " + String(h) + " 小时");
+      request->send(200, "text/plain", "自动检查间隔已设为每 " + String(v) + " 分钟");
       return;
     }
     // ---- OTA 自动升级链接（空 = 恢复内置巴法云链接）----
@@ -1870,7 +1870,7 @@ void setupWebServer() {
     doc["otaAuto"]      = otaAutoEnabled;
     doc["temperature"]  = dhtEnabled ? String(dhtTemperature, 1) : String("-1");
     doc["humidity"]     = dhtEnabled ? String((int)(dhtHumidity + 0.5f)) : String("-1");
-    doc["otaInterval"]  = otaIntervalH;
+    doc["otaInterval"]  = otaIntervalMin;
     doc["otaAutoUrl"]   = otaAutoUrl;
 
     doc["timerActive"] = timerActive;

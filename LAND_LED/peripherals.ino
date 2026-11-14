@@ -24,7 +24,7 @@ static bool          dhtInited   = false;
 
 // ---- OTA 定时自动升级 ----
 bool         otaAutoEnabled = false;                          ///< 定时自动升级是否启用
-uint8_t      otaIntervalH   = OTA_AUTO_INTERVAL_DEFAULT;      ///< 自动检查间隔（小时，1~255）
+uint16_t     otaIntervalMin = OTA_AUTO_INTERVAL_DEFAULT;      ///< 自动检查间隔（分钟，1~65535）
 char         otaAutoUrl[129] = "";                            ///< 自动升级链接（空 = 内置 OTA_AUTO_URL）
 char         otaRemoteTime[33] = "";                          ///< 远程固件上传时间（显示用）
 char         otaLocalTime[33] = "";                           ///< 当前固件上传时间（显示用）
@@ -39,7 +39,7 @@ static unsigned long otaCheckLastRun = 0;
  * @brief 从 EEPROM 加载外设开关 / OTA 定时自动升级配置。
  *
  * 存储区域布局（OTA_FLAGS_EEPROM_ADDR 起，共 OTA_FLAGS_TOTAL 字节）：
- *   [0] 魔数 0xA5   [1] 位标志   [2] 检查间隔小时
+ *   [0] 魔数 0xA5   [1] 位标志   [2~3] 检查间隔分钟
  *   [3~34] 当前固件的 Last-Modified 原始串   [35~162] 自动升级链接
  * 空白 Flash 与魔数不符 → 写入默认值（DHT11 关、红外开、自动升级关，与老版本一致）。
  */
@@ -47,7 +47,8 @@ void loadPeriphFlags() {
   EEPROM.begin(EEPROM_SIZE);
   uint8_t magic    = EEPROM.read(OTA_FLAGS_EEPROM_ADDR);
   uint8_t flags    = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + 1);
-  uint8_t interval = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF);
+  uint16_t interval = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF)
+                    | ((uint16_t)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF + 1) << 8);
   char    lmBuf[OTA_FLAGS_LM_LEN + 1]  = {0};
   for (int i = 0; i < OTA_FLAGS_LM_LEN; i++)  lmBuf[i] = (char)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_LM_OFF + i);
   char    urlBuf[OTA_FLAGS_URL_LEN + 1] = {0};
@@ -67,7 +68,7 @@ void loadPeriphFlags() {
   dhtEnabled     = (flags & PERIPH_FLAG_DHT) != 0;
   irEnabled      = (flags & PERIPH_FLAG_IR)  != 0;
   otaAutoEnabled = (flags & PERIPH_FLAG_OTA) != 0;
-  otaIntervalH   = (interval >= 1 && interval <= 255) ? interval : OTA_AUTO_INTERVAL_DEFAULT;
+  otaIntervalMin = (interval >= 1 && interval != 0xFFFF) ? interval : OTA_AUTO_INTERVAL_DEFAULT;
 
   // Last-Modified 原始串：要求全部为可打印字符，否则视为未知
   bool lmOk = (lmBuf[0] != '\0' && lmBuf[0] != (char)0xFF);
@@ -91,8 +92,8 @@ void loadPeriphFlags() {
   DEBUG_PRINT("  自动升级: ");
   DEBUG_PRINT(otaAutoEnabled ? "开" : "关");
   DEBUG_PRINT("  间隔: ");
-  DEBUG_PRINT(otaIntervalH);
-  DEBUG_PRINTLN(" 小时");
+  DEBUG_PRINT(otaIntervalMin);
+  DEBUG_PRINTLN(" 分钟");
 }
 
 /**
@@ -108,7 +109,8 @@ bool savePeriphFlags() {
   EEPROM.begin(EEPROM_SIZE);
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR, magic);
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR + 1, flags);
-  EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF, otaIntervalH);
+  EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF, otaIntervalMin & 0xFF);
+  EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF + 1, (otaIntervalMin >> 8) & 0xFF);
   for (int i = 0; i < OTA_FLAGS_LM_LEN; i++) {
     char c = (i < (int)strlen(otaLocalLM)) ? otaLocalLM[i] : 0;
     EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_LM_OFF + i, c);
@@ -123,9 +125,10 @@ bool savePeriphFlags() {
   EEPROM.begin(EEPROM_SIZE);
   uint8_t vm = EEPROM.read(OTA_FLAGS_EEPROM_ADDR);
   uint8_t vf = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + 1);
-  uint8_t vh = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF);
+  uint16_t vh = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF)
+              | ((uint16_t)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF + 1) << 8);
   EEPROM.end();
-  bool okVerify = (vm == magic && vf == flags && vh == otaIntervalH);
+  bool okVerify = (vm == magic && vf == flags && vh == otaIntervalMin);
 
   DEBUG_PRINT("[外设] 配置保存: commit=");
   DEBUG_PRINT(okCommit ? "OK" : "FAIL");
@@ -335,7 +338,7 @@ void otaAutoTick() {
   if (!otaAutoEnabled) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
-  unsigned long intervalMs = (unsigned long)otaIntervalH * 3600UL * 1000UL;
+  unsigned long intervalMs = (unsigned long)otaIntervalMin * 60UL * 1000UL;
   if (otaAutoLastRun != 0 && millis() - otaAutoLastRun < intervalMs) return;
   bool first = (otaAutoLastRun == 0);      // 开机后的第一次检查
   otaAutoLastRun = millis();
