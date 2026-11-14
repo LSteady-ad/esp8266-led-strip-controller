@@ -1013,7 +1013,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         if(_mb)_mb.classList.toggle('on',!!data.otaAuto);
         if(_mm)_mm.classList.toggle('on',!data.otaAuto);
         var _oci=document.getElementById('otaCheckInfo');
-        if(_oci){
+        if(_oci&&!window.otaBusy){
           var _cur='当前固件: v'+(data.otaLastVersion||'?')+'（'+(data.otaLastDate||'-')+'）';
           if(!data.otaRemoteOk)_oci.innerHTML='远程固件: 检查失败（确认 MQTT 的 Client ID 与网络）<br>'+_cur;
           else _oci.innerHTML='远程固件: v'+data.otaRemoteVer+'（'+Math.round((data.otaRemoteSize||0)/1024)+' KB）'+(data.otaHasNew?'　⬆ 有新版本':'　已是最新')+'<br>更新日期: '+(data.otaRemoteDate||'-')+'<br>'+_cur;
@@ -1128,6 +1128,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
       var otaPoll=null,otaSaw=false;
       ocb.addEventListener('click',function(){
         ocb.disabled=true;otaSaw=false;
+        window.otaBusy=true;   /* 升级期间禁止 fetchCurrentState 覆盖进度文字 */
         if(otaBarWrap)otaBarWrap.style.display='';
         otaBarSet(0);
         fetch('/control?otachecknow=1').then(function(r){return r.text();}).then(function(t){oci.textContent=t;})
@@ -1135,7 +1136,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         otaPoll=setInterval(function(){
           fetch('/otastatus',{cache:'no-store'}).then(function(r){return r.text();}).then(function(v){
             var p=parseInt(v,10);
-            if(p===-2){oci.textContent='✗ 升级失败，设备已回退';ocb.disabled=false;clearInterval(otaPoll);if(otaBarWrap)otaBarWrap.style.display='none';return;}
+            if(p===-2){oci.textContent='✗ 升级失败，设备已回退';ocb.disabled=false;window.otaBusy=false;clearInterval(otaPoll);if(otaBarWrap)otaBarWrap.style.display='none';return;}
             if(p>=100){otaSaw=true;otaBarSet(100);oci.textContent='下载完成，正在写入 Flash（请勿断电）…';return;}
             if(p>=0){otaSaw=true;otaBarSet(Math.max(p,3));oci.textContent='正在下载固件 '+p+'%…';return;}
             if(otaSaw&&p===-1){
@@ -1143,6 +1144,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
                 otaInfo(d);ocb.disabled=false;clearInterval(otaPoll);
                 if(otaBarWrap)otaBarWrap.style.display='none';
                 oci.innerHTML+='<br>✓ 升级完成';
+                window.otaBusy=false;
               }).catch(function(){});
               return;
             }
@@ -1150,6 +1152,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
               otaInfo(d);ocb.disabled=false;clearInterval(otaPoll);
               if(otaBarWrap)otaBarWrap.style.display='none';
               if(d.otaHasNew)oci.innerHTML+='<br>⬆ 已触发升级…';
+              window.otaBusy=false;
             }).catch(function(){});
           }).catch(function(){});
         },1000);

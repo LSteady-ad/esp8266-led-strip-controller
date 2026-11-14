@@ -1577,9 +1577,13 @@ void setupWebServer() {
       return;
     }
     // ---- OTA 定时自动升级：开关 + 每天几点 + 升级链接 ----
-    // ---- OTA 定时自动检查升级开关 ----
+    // ---- OTA 定时自动检查升级开关（网页会把间隔一起带过来，这里顺带保存）----
     if (request->hasParam("otaauto")) {
       otaAutoEnabled = (request->getParam("otaauto")->value().toInt() != 0);
+      if (request->hasParam("otainterval")) {
+        int v = request->getParam("otainterval")->value().toInt();
+        if (v >= 1 && v <= 65535) otaIntervalMin = (uint16_t)v;
+      }
       savePeriphFlags();
       request->send(200, "text/plain", otaAutoEnabled
         ? "已开启定时自动检查升级（固件有新版本会直接刷入）"
