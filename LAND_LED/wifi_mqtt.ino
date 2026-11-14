@@ -1863,6 +1863,11 @@ void setupWebServer() {
     doc["otaRemoteSize"]  = otaRemoteSize;
     doc["otaRemoteOk"]    = otaRemoteOk;
     doc["otaHasNew"]      = otaHasNew;
+    {
+      time_t nowT = time(nullptr);
+      doc["timeEpoch"]  = (uint32_t)nowT;          // 当前时间（unix 秒），网页时钟据此走秒
+      doc["timeSynced"] = (nowT > 1700000000);     // SNTP 是否已同步
+    }
 
     doc["timerActive"] = timerActive;
     doc["timerRemaining"] = timerActive
