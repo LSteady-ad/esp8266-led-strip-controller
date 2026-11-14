@@ -12,7 +12,6 @@
  */
 #include "config.h"
 #include <ESP8266HTTPClient.h>
-#include <WiFiClientSecure.h>
 
 // ---- 外设 ----
 bool  dhtEnabled     = false;   ///< DHT11 是否启用
@@ -254,15 +253,21 @@ void otaCheckRequest() {
  */
 static bool otaQueryApi(uint32_t& ver, uint32_t& unixT, String& url, uint32_t& size) {
   // 巴法云 openID 就是 MQTT 设备私钥（Client ID），直接复用配置，不用单独填
-  if (mqttConfig.clientId[0] == '\0' || mqttConfig.topic[0] == '\0') return false;
+  if (mqttConfig.clientId[0] == '\0' || mqttConfig.topic[0] == '\0') {
+    DEBUG_PRINTLN("[OTA] 缺少 MQTT Client ID 或订阅主题，无法检查更新");
+    return false;
+  }
 
-  WiFiClientSecure sec;
-  sec.setInsecure();   // 不校验证书链（设备侧常规做法）
+  // 用 http 而不是 https：巴法云 API 服务器同时支持两者（实测都返回 200），
+  // http 不需要 TLS 握手，省 flash（约 120KB）和堆内存，ESP8266 上更稳。
+  WiFiClient c;
   HTTPClient http;
-  String api = String("https://apis.bemfa.com/vb/api/v1/firmwareVersion?openID=")
+  String api = String("http://apis.bemfa.com/vb/api/v1/firmwareVersion?openID=")
              + mqttConfig.clientId + "&topic=" + mqttConfig.topic + "&deviceType=1";
-  if (!http.begin(sec, api)) return false;
+  http.setTimeout(10000);   // 10 秒，比默认 5 秒宽松
+  if (!http.begin(c, api)) return false;
   int code = http.GET();
+  if (code != 200) DEBUG_PRINTLN("[OTA] 接口返回 HTTP " + String(code));
   bool ok = false;
   if (code == 200) {
     JsonDocument doc;
