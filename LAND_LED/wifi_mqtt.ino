@@ -1562,6 +1562,27 @@ void setupWebServer() {
     // 允许保存为空：清空 Client ID / 订阅主题也算合法操作。
     // 但凭据为空时不可能连上云平台，因此若此时开关处于开启状态，
     // 会顺手把总开关关掉并落盘（避免"开关开着却永远连不上"）。
+    // ---- 可选外设开关（DHT11 / 红外接收）----
+    if (request->hasParam("dhtenable")) {
+      dhtEnabled = (request->getParam("dhtenable")->value().toInt() != 0);
+      savePeriphFlags();
+      DEBUG_PRINTLN("[外设] DHT11: " + String(dhtEnabled ? "开" : "关"));
+      request->send(200, "text/plain", dhtEnabled ? "DHT11 已开启（接 D5/GPIO14）" : "DHT11 已关闭");
+      return;
+    }
+    if (request->hasParam("irenable")) {
+      irEnabled = (request->getParam("irenable")->value().toInt() != 0);
+      savePeriphFlags();
+      request->send(200, "text/plain", irEnabled ? "红外接收已开启（接 D2/GPIO4）" : "红外接收已关闭");
+      return;
+    }
+    // ---- OTA 开机自动升级开关 ----
+    if (request->hasParam("otaauto")) {
+      otaAutoEnabled = (request->getParam("otaauto")->value().toInt() != 0);
+      savePeriphFlags();
+      request->send(200, "text/plain", otaAutoEnabled ? "OTA 自动升级已开启（每次上电联网后自动从默认链接升级）" : "OTA 自动升级已关闭");
+      return;
+    }
     if (request->hasParam("savemqtt")) {
       String mqttId    = request->hasParam("mqttid")    ? request->getParam("mqttid")->value()    : String("");
       String mqttTopic = request->hasParam("mqtttopic") ? request->getParam("mqtttopic")->value() : String("");
@@ -1807,6 +1828,11 @@ void setupWebServer() {
     doc["ledCount"]   = num_leds;
     doc["reverse"]    = reverseDisplay;
     doc["solidAnim"]  = solidAnimMode;
+    doc["dhtEnabled"]   = dhtEnabled;
+    doc["irEnabled"]    = irEnabled;
+    doc["otaAuto"]      = otaAutoEnabled;
+    doc["temperature"]  = dhtEnabled ? String(dhtTemperature, 1) : String("-1");
+    doc["humidity"]     = dhtEnabled ? String((int)(dhtHumidity + 0.5f)) : String("-1");
 
     doc["timerActive"] = timerActive;
     doc["timerRemaining"] = timerActive
@@ -1912,6 +1938,21 @@ void setupWebServer() {
   // ---- GET /ota（一键 HTTP 升级）----
   // 参数 url = 固件 .bin 下载链接。立即返回"开始升级"，随后在后台执行升级；
   // 升级成功会自动重启到新固件，失败则回到当前固件继续运行。
+  // ---- GET /temperature（纯数字：当前温度，如 25.4；未启用返回 -1）----
+  server.on("/temperature", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/plain", dhtEnabled ? String(dhtTemperature, 1) : String("-1"));
+  });
+
+  // ---- GET /humidity（纯数字：当前湿度整数，如 60；未启用返回 -1）----
+  server.on("/humidity", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/plain", dhtEnabled ? String((int)(dhtHumidity + 0.5f)) : String("-1"));
+  });
+
+  // ---- GET /otastatus（纯数字：OTA 进度。-2=失败 -1=空闲 0~99=下载中 100=写入Flash）----
+  server.on("/otastatus", HTTP_GET, [](AsyncWebServerRequest* request) {
+    request->send(200, "text/plain", String(otaProgress));
+  });
+
   server.on("/ota", HTTP_GET, [](AsyncWebServerRequest* request) {
     if (!request->hasParam("url")) {
       request->send(400, "text/plain", "缺少 url 参数");

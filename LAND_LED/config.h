@@ -54,6 +54,9 @@
 
 /** 红外接收器引脚（GPIO4 / D2） */
 static const uint16_t kRecvPin = 4;
+// DHT11 温湿度传感器数据脚：丝印 D5 = GPIO14（VCC 接 3.3V，GND 共地）
+// 读取协议为手写单总线（peripherals.ino），不依赖第三方库
+#define DHT_PIN 14
 
 // ============================================================
 // 灯带参数
@@ -330,6 +333,10 @@ static const int WIFI_LIST_EEPROM_ADDR = MQTT_CONFIG_EEPROM_ADDR + sizeof(MqttCo
 #define DEFAULT_MQTT_SERVER "bemfa.com"
 #define DEFAULT_MQTT_PORT   9501
 
+/** OTA 自动升级使用的默认固件链接（巴法云）。把新版本 bin 传到巴法云覆盖它，
+ *  开启"开机自动升级"的设备联网后就会自动拉取这个链接升级。 */
+#define OTA_AUTO_URL "http://bin.bemfa.com/b/253904/1BcOTllNTViNDMwN2U3NDA2ZDhjOGVjZjM5MTIyYmRkODk=xuexiaoden002.bin"
+
 /**
  * @brief MQTT 服务器地址与端口（存储在 EEPROM 独立区域）。
  *
@@ -349,8 +356,20 @@ struct MqttServerConfig {
 /** MQTT 服务器配置在 EEPROM 中的存储地址（紧随 WiFi 列表之后） */
 static const int MQTT_SERVER_EEPROM_ADDR = WIFI_LIST_EEPROM_ADDR + sizeof(WiFiList);
 
+/**
+ * 可选外设开关 / OTA 自动升级开关 的存储地址（追加在 MQTT 服务器配置之后）。
+ * 存储格式 2 字节：[魔数 0xA5][位标志]。空白 Flash 读出 0xFF 与魔数不符
+ * → 视为未初始化 → 写入默认值（DHT11 关、红外开、OTA 自动升级关，与老版本行为一致）。
+ * 位定义：bit0=DHT11 温湿度  bit1=红外接收  bit2=OTA 开机自动升级
+ */
+static const int OTA_FLAGS_EEPROM_ADDR = MQTT_SERVER_EEPROM_ADDR + sizeof(MqttServerConfig);
+#define OTA_FLAGS_MAGIC    0xA5
+#define PERIPH_FLAG_DHT    0x01
+#define PERIPH_FLAG_IR     0x02
+#define PERIPH_FLAG_OTA    0x04
+
 /** EEPROM 总大小（WiFi配置 + 灯珠 + 反向 + 断电计数 + MQTT配置 + WiFi列表 + MQTT服务器） */
-#define EEPROM_SIZE (sizeof(WiFiConfig) + sizeof(uint16_t) + 1 + 1 + sizeof(MqttConfig) + sizeof(WiFiList) + sizeof(MqttServerConfig))
+#define EEPROM_SIZE (sizeof(WiFiConfig) + sizeof(uint16_t) + 1 + 1 + sizeof(MqttConfig) + sizeof(WiFiList) + sizeof(MqttServerConfig) + 2)
 
 // ============================================================
 // 调试串口开关
@@ -431,6 +450,12 @@ extern WiFiConfig    wifiConfig;     ///< 当前生效的 WiFi 配置（多网�
 extern WiFiList      wifiList;       ///< 已保存的多组 WiFi 网络（从 EEPROM 加载）
 extern MqttConfig    mqttConfig;     ///< MQTT 配置（从 EEPROM 加载）
 extern MqttServerConfig mqttServerConfig; ///< MQTT 服务器地址/端口（从 EEPROM 加载）
+extern bool          dhtEnabled;      ///< DHT11 温湿度传感器是否启用（网页"灯带设置"里开关）
+extern bool          irEnabled;       ///< 红外接收是否启用
+extern bool          otaAutoEnabled;  ///< OTA 开机自动升级是否启用
+extern float         dhtTemperature;  ///< 最近一次成功读取的温度（℃）
+extern float         dhtHumidity;     ///< 最近一次成功读取的湿度（%）
+extern volatile int  otaProgress;     ///< OTA 进度：-1空闲 -2失败 0~99下载中 100写入Flash（/otastatus 返回）
 extern bool          apTempEnabled;  ///< 热点当前是"自动/强制"开的（非用户勾选「AP模式」）
 extern bool          wifiSwitchNow;  ///< 置位后 loop 立即切换到当前选中(active)的 WiFi 网络
 extern WiFiClient    espClient;      ///< WiFi TCP 客户端
@@ -491,6 +516,9 @@ void loadMqttConfig();   ///< 从 EEPROM 加载 MQTT 配置（首次用默认值
 bool saveMqttConfig();   ///< 将当前 MQTT 配置写入 EEPROM 并回读校验，返回是否成功
 void loadMqttServerConfig(); ///< 从 EEPROM 加载 MQTT 服务器地址/端口（未初始化则写入默认值）
 bool saveMqttServerConfig(); ///< 将 MQTT 服务器地址/端口写入 EEPROM 并回读校验
+void loadPeriphFlags();  ///< 加载外设/OTA自动升级开关（未初始化时写默认值）
+bool savePeriphFlags();  ///< 将外设/OTA自动升级开关写入 EEPROM 并回读校验
+void periphTick();       ///< 外设轮询（loop 里调用：DHT11 每 2 秒读一次）
 int  connectToWiFi(int wifiStartLed, int wifiEndLed);
 void setupWebServer();
 void manageWiFiConnection();  ///< 运行时动态 AP 管理 + 断网多网络轮询重连（loop 中调用）

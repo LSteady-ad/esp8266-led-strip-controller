@@ -1,5 +1,5 @@
-# ---- 编译产物（arduino-cli / Arduino IDE 生成，不进仓库；成品 bin 在 firmware/ 里）----
-build/
+# ---- 编译产物（arduino-cli / Arduino IDE 生成，不进仓库；成品 bin 随 Release 发布）----
+LAND_LED/build/
 *.elf
 *.map
 
