@@ -1853,6 +1853,7 @@ void setupWebServer() {
     doc["dhtEnabled"]   = dhtEnabled;
     doc["irEnabled"]    = irEnabled;
     doc["otaAuto"]      = otaAutoEnabled;
+    doc["otaInterval"]  = otaIntervalMin;   /* 网页回填间隔用，缺了会被兜底成 240 */
     doc["temperature"]  = dhtEnabled ? String(dhtTemperature, 1) : String("-1");
     doc["humidity"]     = dhtEnabled ? String((int)(dhtHumidity + 0.5f)) : String("-1");
     doc["otaLastVersion"] = otaLastVersion;
