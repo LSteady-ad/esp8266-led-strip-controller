@@ -252,17 +252,33 @@ void periphTick() {
  *        解析失败返回 ""。+8 小时直接换算成北京时间，与巴法云 OTA 页面显示一致。
  */
 String otaFormatLMStr(const String& raw) {
+  // Last-Modified 原始格式："Sat, 14 Nov 2026 11:44:29 GMT"
+  // 注意：星期后面跟着逗号（"Sat,"），用 %*s 整个跳过；
+  // 若用 %*3s 只吃掉 "Sat"，逗号会留给后面的 %d 导致解析失败返回空。
   int d, y, hh, mm, ss;
   char monStr[4] = {0};
-  if (sscanf(raw.c_str(), "%*3s %d %3s %d %d:%d:%d", &d, monStr, &y, &hh, &mm, &ss) != 6) return "";
+  if (sscanf(raw.c_str(), "%*s %d %3s %d %d:%d:%d", &d, monStr, &y, &hh, &mm, &ss) != 6) return "";
   static const char* months[] = {"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
   int mon = -1;
   for (int i = 0; i < 12; i++) {
     if (strncmp(monStr, months[i], 3) == 0) { mon = i; break; }
   }
   if (mon < 0) return "";
+
+  // GMT → 北京时间（+8 小时）。用天数算法先算 UTC 纪元秒再整体平移，
+  // 避免"直接在小时上加 8"造成的跨日/跨月溢出（比如 20:00 GMT 加 8 应该是次日 4 点）。
+  y -= (mon + 1 <= 2) ? 1 : 0;
+  long era = (y >= 0 ? y : y - 399) / 400;
+  long yoe = y - era * 400;
+  long doy = (153 * (mon + 1 + (mon + 1 > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  long doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  long epochUTC = (era * 146097 + doe - 719468) * 86400L + hh * 3600L + mm * 60L + ss;
+  time_t beijing = (time_t)(epochUTC + 8 * 3600);
+  struct tm* bt = gmtime(&beijing);
+  if (!bt) return "";
   char out[24] = {0};
-  snprintf(out, sizeof(out), "%04d-%02d-%02d %02d:%02d:%02d", y, mon + 1, d, hh + 8, mm, ss);
+  snprintf(out, sizeof(out), "%04d-%02d-%02d %02d:%02d:%02d",
+           bt->tm_year + 1900, bt->tm_mon + 1, bt->tm_mday, bt->tm_hour, bt->tm_min, bt->tm_sec);
   return String(out);
 }
 
