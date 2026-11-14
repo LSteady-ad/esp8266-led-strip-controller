@@ -368,7 +368,8 @@ static const int MQTT_SERVER_EEPROM_ADDR = WIFI_LIST_EEPROM_ADDR + sizeof(WiFiLi
  *   [36~163] 自动升级固件链接（128B，空 = 使用内置 OTA_AUTO_URL）
  */
 static const int OTA_FLAGS_EEPROM_ADDR = MQTT_SERVER_EEPROM_ADDR + sizeof(MqttServerConfig);
-#define OTA_FLAGS_MAGIC    0xA5
+#define OTA_FLAGS_MAGIC    0xA6   /* v2：间隔改分钟(uint16)，偏移与 v1(0xA5) 不兼容 */
+#define OTA_FLAGS_MAGIC_V1 0xA5   /* 旧布局魔数：迁移时识别用 */
 #define PERIPH_FLAG_DHT    0x01
 #define PERIPH_FLAG_IR     0x02
 #define PERIPH_FLAG_OTA    0x04
@@ -469,7 +470,7 @@ extern bool          otaAutoEnabled;  ///< OTA 开机自动升级是否启用
 extern float         dhtTemperature;  ///< 最近一次成功读取的温度（℃）
 extern float         dhtHumidity;     ///< 最近一次成功读取的湿度（%）
 extern volatile int  otaProgress;     ///< OTA 进度：-1空闲 -2失败 0~99下载中 100写入Flash（/otastatus 返回）
-extern uint16_t      otaIntervalMin;  ///< 自动检查升级的间隔（分钟，1~65535，默认 240）
+extern uint16_t      otaIntervalMin;  ///< 自动检查升级的间隔（分钟，1~43200，默认 240）
 extern char          otaAutoUrl[129]; ///< 自动升级固件链接（存 EEPROM，空 = 内置 OTA_AUTO_URL）
 extern char          otaRemoteTime[33]; ///< 最近一次检查到的远程固件上传时间（网页显示用）
 extern char          otaLocalTime[33];  ///< 当前固件对应 bin 的上传时间（网页显示用）

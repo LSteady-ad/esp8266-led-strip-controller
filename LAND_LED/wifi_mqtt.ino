@@ -1581,7 +1581,7 @@ void setupWebServer() {
       otaAutoEnabled = (request->getParam("otaauto")->value().toInt() != 0);
       if (request->hasParam("otainterval")) {
         int v = request->getParam("otainterval")->value().toInt();
-        if (v >= 1 && v <= 65535) otaIntervalMin = (uint16_t)v;
+        if (v >= 1 && v <= 43200) otaIntervalMin = (uint16_t)v;
       }
       if (request->hasParam("otaautourl")) {
         String u = request->getParam("otaautourl")->value();
@@ -1600,7 +1600,7 @@ void setupWebServer() {
     // ---- OTA 自动检查间隔（分钟）----
     if (request->hasParam("otainterval")) {
       int v = request->getParam("otainterval")->value().toInt();
-      if (v < 1 || v > 65535) { request->send(400, "text/plain", "间隔须为 1~65535 分钟"); return; }
+      if (v < 1 || v > 43200) { request->send(400, "text/plain", "间隔须为 1~43200 分钟"); return; }
       otaIntervalMin = (uint16_t)v;
       savePeriphFlags();
       request->send(200, "text/plain", "自动检查间隔已设为每 " + String(v) + " 分钟");

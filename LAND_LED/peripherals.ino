@@ -56,7 +56,24 @@ void loadPeriphFlags() {
   EEPROM.end();
 
   if (magic != OTA_FLAGS_MAGIC) {
-    // 首次上电 / 旧版本升级上来：写默认值（与老版本行为一致）
+    // 布局迁移：0xA5 = 旧布局（间隔是"每天X点"，[2] 存小时，[3~] 存上传时间）。
+    // 新布局（0xA6）把 [2~3] 当分钟 uint16 读，会读到 4+'S'<<8 之类的垃圾值
+    // （比如 21252），所以旧区域不能直接沿用 —— 只继承位标志字节（偏移相同），
+    // 间隔 / 上传时间戳 / 升级链接全部回默认重新登记。
+    // 全新设备（空白 Flash）→ 直接默认值。
+    if (magic == OTA_FLAGS_MAGIC_V1) {
+      dhtEnabled     = (flags & PERIPH_FLAG_DHT) != 0;
+      irEnabled      = (flags & PERIPH_FLAG_IR)  != 0;
+      otaAutoEnabled = (flags & PERIPH_FLAG_OTA) != 0;
+      otaIntervalMin = OTA_AUTO_INTERVAL_DEFAULT;
+      strlcpy(otaLocalLM, "", sizeof(otaLocalLM));
+      strlcpy(otaLocalTime, "(未知)", sizeof(otaLocalTime));
+      strlcpy(otaAutoUrl, "", sizeof(otaAutoUrl));
+      savePeriphFlags();
+      DEBUG_PRINTLN("[外设] 检测到旧布局(0xA5)，开关已迁移、其余重新登记");
+      return;
+    }
+    // 首次上电（空白 Flash）：默认值
     dhtEnabled     = false;
     irEnabled      = true;
     otaAutoEnabled = false;
@@ -68,7 +85,8 @@ void loadPeriphFlags() {
   dhtEnabled     = (flags & PERIPH_FLAG_DHT) != 0;
   irEnabled      = (flags & PERIPH_FLAG_IR)  != 0;
   otaAutoEnabled = (flags & PERIPH_FLAG_OTA) != 0;
-  otaIntervalMin = (interval >= 1 && interval != 0xFFFF) ? interval : OTA_AUTO_INTERVAL_DEFAULT;
+  // 间隔合理上限 43200 分钟（30 天）；0 / 0xFFFF / 超上限 → 回默认
+  otaIntervalMin = (interval >= 1 && interval <= 43200) ? interval : OTA_AUTO_INTERVAL_DEFAULT;
 
   // Last-Modified 原始串：要求全部为可打印字符，否则视为未知
   bool lmOk = (lmBuf[0] != '\0' && lmBuf[0] != (char)0xFF);
