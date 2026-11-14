@@ -92,7 +92,7 @@ static const uint16_t kRecvPin = 4;
  * 即：连续快速断电 4 次后，第 5 次上电即触发恢复出厂设置。
  * （计数在每次上电时先读取再判断，故触发发生在上电瞬间。）
  */
-#define BOOT_RESET_COUNT  4
+#define BOOT_RESET_COUNT  7
 
 /**
  * @brief 系统稳定运行时间阈值（毫秒）。

@@ -265,6 +265,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   <div class="row"><span style="flex:1">📡 红外接收<small style="opacity:.6"> 接 D2 / GPIO4</small></span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="irToggle"><span class="tr"></span></label></div></div>
   <div class="cs" id="periphStatus"></div>
+  <div class="row"><button class="btn r dgr" id="restartDevice" style="width:100%">🔄 重启设备</button></div>
 </div></div></section>
 <section class="p accordion-panel"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">🌐 WiFi 配置</span><span class="tg on ssid" id="wifiSsidTag">LAND_5G</span></div>
 <div class="pb accordion-body"><div class="in">
@@ -292,7 +293,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
     <div class="chk on" id="staOption"><span class="bx" id="staCheckbox"></span><span>STA模式</span></div>
     <div class="chk on" id="apOption"><span class="bx" id="apCheckbox"></span><span>AP模式</span></div>
   </div>
-  <div class="row"><button class="btn g p" id="saveConfig">💾 保存</button><button class="btn r dgr" id="restartDevice">🔄 重启设备</button></div>
+  <div class="row"><button class="btn g p" id="saveConfig" style="width:100%">💾 保存</button></div>
   <div class="cs" id="wifiConfigStatus"></div>
   <div class="st">📁 已保存的网络 <span id="wifiNetCount">3/6</span></div>
   <div class="lst" id="wifiSavedList">
@@ -1046,6 +1047,28 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
       setTimeout(startWifiScan,400);
 
       
+    /* ---- 外设开关（灯带设置：DHT11 温湿度 / 红外接收）----
+       注意：这两段监听曾经在网页改版时被误删，表现为"打开开关两秒后自动关回去"
+       （点了不保存，/state 刷新又把勾选状态还原）。改网页时务必保留。 */
+    var dhtT=document.getElementById('dhtToggle');
+    if(dhtT)dhtT.addEventListener('change',function(){
+      var st=document.getElementById('periphStatus');
+      var on=dhtT.checked;
+      fetch('/control?dhtenable='+(on?1:0))
+        .then(function(r){return r.text();})
+        .then(function(t){if(st){st.textContent=t;st.style.color='#3a5';}})
+        .catch(function(e){if(st){st.textContent='操作失败: '+e.message;st.style.color='#e05';}dhtT.checked=!on;});
+    });
+    var irT=document.getElementById('irToggle');
+    if(irT)irT.addEventListener('change',function(){
+      var st=document.getElementById('periphStatus');
+      var on=irT.checked;
+      fetch('/control?irenable='+(on?1:0))
+        .then(function(r){return r.text();})
+        .then(function(t){if(st){st.textContent=t;st.style.color='#3a5';}})
+        .catch(function(e){if(st){st.textContent='操作失败: '+e.message;st.style.color='#e05';}irT.checked=!on;});
+    });
+
     /* ---- OTA：两种模式（巴法云升级 / 手动升级）----
        巴法云：按间隔调 API 检查版本，有新版本自动刷入；「一键升级」= 立即检查。
        手动：填固件下载链接，点「一键升级」直接刷。 */
@@ -1970,7 +1993,7 @@ void setup() {
   // 重启后按默认参数（DEFAULT_LEDS 等）重新启动。
   //
   // 提示：清除期间全部灯珠会点亮为白色并持续 2 秒，然后自动重启。
-  //       本机制不区分"是否已配置过"，连续 4 次快速断电后第 5 次上电即触发。
+  //       本机制不区分"是否已配置过"，连续 7 次快速断电后下一次上电即触发。
   // ============================================================
   EEPROM.begin(EEPROM_SIZE);
   uint8_t bootCount = readBootCount();
