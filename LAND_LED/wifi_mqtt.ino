@@ -1579,9 +1579,9 @@ void setupWebServer() {
     // ---- OTA 定时自动升级：开关 + 每天几点 + 升级链接 ----
     if (request->hasParam("otaauto")) {
       otaAutoEnabled = (request->getParam("otaauto")->value().toInt() != 0);
-      if (request->hasParam("otahour")) {
-        int h = request->getParam("otahour")->value().toInt();
-        if (h >= 0 && h <= 23) otaAutoHour = (uint8_t)h;
+      if (request->hasParam("otainterval")) {
+        int h = request->getParam("otainterval")->value().toInt();
+        if (h >= 1 && h <= 255) otaIntervalH = (uint8_t)h;
       }
       if (request->hasParam("otaautourl")) {
         String u = request->getParam("otaautourl")->value();
@@ -1592,18 +1592,18 @@ void setupWebServer() {
       }
       savePeriphFlags();
       String msg = otaAutoEnabled
-        ? "已开启：每天 " + String(otaAutoHour) + " 点自动检查（固件有更新才会刷入）"
+        ? "已开启：每 " + String(otaIntervalH) + " 小时自动检查一次（固件有更新才会刷入）"
         : "定时自动升级已关闭";
       request->send(200, "text/plain", msg);
       return;
     }
-    // ---- OTA 自动检查时间（0~23 点）----
-    if (request->hasParam("otahour")) {
-      int h = request->getParam("otahour")->value().toInt();
-      if (h < 0 || h > 23) { request->send(400, "text/plain", "小时须在 0~23"); return; }
-      otaAutoHour = (uint8_t)h;
+    // ---- OTA 自动检查间隔（小时）----
+    if (request->hasParam("otainterval")) {
+      int h = request->getParam("otainterval")->value().toInt();
+      if (h < 1 || h > 255) { request->send(400, "text/plain", "间隔须为 1~255 小时"); return; }
+      otaIntervalH = (uint8_t)h;
       savePeriphFlags();
-      request->send(200, "text/plain", "自动检查时间已设为每天 " + String(h) + " 点");
+      request->send(200, "text/plain", "自动检查间隔已设为每 " + String(h) + " 小时");
       return;
     }
     // ---- OTA 自动升级链接（空 = 恢复内置巴法云链接）----
@@ -1870,7 +1870,7 @@ void setupWebServer() {
     doc["otaAuto"]      = otaAutoEnabled;
     doc["temperature"]  = dhtEnabled ? String(dhtTemperature, 1) : String("-1");
     doc["humidity"]     = dhtEnabled ? String((int)(dhtHumidity + 0.5f)) : String("-1");
-    doc["otaHour"]      = otaAutoHour;
+    doc["otaInterval"]  = otaIntervalH;
     doc["otaAutoUrl"]   = otaAutoUrl;
 
     doc["timerActive"] = timerActive;

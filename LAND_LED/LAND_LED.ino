@@ -324,13 +324,10 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 </div></div></section>
 <section class="p accordion-panel"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">🔄 OTA 升级</span><span class="tg i" id="otaVersionTag">固件</span></div>
 <div class="pb accordion-body"><div class="in">
-  <div class="st">固件下载链接</div>
+  <div class="st">固件下载链接（修改保存后同时作为自动升级链接）</div>
   <div class="row"><input type="text" id="otaUrl" style="flex:1" placeholder="粘贴 .bin 固件下载链接"></div>
-  <div class="row"><span style="flex:1">⏰ 每天定时自动升级<small style="opacity:.6"> 固件有更新才会刷入</small></span>
-  <input type="number" id="otaHour" min="0" max="23" value="4" style="width:56px"><span class="lb" style="min-width:auto">点</span>
+  <div class="row"><span style="flex:1">🔄 每 <input type="number" id="otaInterval" min="1" max="255" value="24" style="width:56px"> 小时自动检查升级<small style="opacity:.6"> 有更新才刷入</small></span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="otaAutoToggle"><span class="tr"></span></label></div></div>
-  <div class="st">自动升级固件链接（留空 = 巴法云内置链接）</div>
-  <div class="row"><input type="text" id="otaAutoUrl" style="flex:1" placeholder="http://bin.bemfa.com/..."></div>
   <div class="row"><button class="btn" id="otaCheckBtn" style="width:100%">🔍 检查更新</button></div>
   <div class="cs" id="otaCheckInfo">尚未检查</div>
   <button class="btn g p" id="otaUpgrade" style="width:100%">⬆️ 一键升级</button>
@@ -1001,10 +998,10 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         document.getElementById('irToggle').checked=!!data.irEnabled;
         var _at=document.getElementById('otaAutoToggle');
         if(_at)_at.checked=!!data.otaAuto;
-        var _oh=document.getElementById('otaHour');
-        if(_oh&&document.activeElement!==_oh)_oh.value=data.otaHour||4;
-        var _ou2=document.getElementById('otaAutoUrl');
-        if(_ou2&&document.activeElement!==_ou2)_ou2.value=data.otaAutoUrl||'';
+        var _oi=document.getElementById('otaInterval');
+        if(_oi&&document.activeElement!==_oi)_oi.value=data.otaInterval||24;
+        var _ol=document.getElementById('otaUrl');
+        if(_ol&&document.activeElement!==_ol)_ol.value=data.otaAutoUrl||'';
         updateDhtDisplay(data);
         document.getElementById('mqttToggle').checked=!!data.mqttEnabled;
         updateMqttToggleStatus(!!data.mqttEnabled,!!data.mqttConnected);
@@ -1053,9 +1050,9 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
       if(ok)setTimeout(fetchCurrentState,1500);
     }
     if(otaUrlEl&&otaBtn){
-      if(!otaUrlEl.value)otaUrlEl.value=OTA_DEFAULT_URL;
       otaBtn.addEventListener('click',function(){
         var u=(otaUrlEl.value||'').trim();
+        if(u==='')u=OTA_DEFAULT_URL;   /* 输入框留空 = 用内置巴法云链接 */
         if(!/^https?:\/\//i.test(u)){
           if(otaSt){otaSt.textContent='链接无效，需以 http:// 或 https:// 开头';otaSt.style.color='#e05';}
           return;
@@ -1138,12 +1135,11 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 
     /* ---- OTA 定时自动升级：开关 / 每天几点 / 升级链接 ---- */
     var oaT=document.getElementById('otaAutoToggle');
-    var oh=document.getElementById('otaHour');
-    var ou=document.getElementById('otaAutoUrl');
+    var oi=document.getElementById('otaInterval');
     function otaSaveSettings(){
       var p='/control?otaauto='+(oaT&&oaT.checked?1:0)+
-            '&otahour='+encodeURIComponent((oh&&oh.value)?oh.value:'4')+
-            '&otaautourl='+encodeURIComponent((ou&&ou.value)?ou.value.trim():'');
+            '&otainterval='+encodeURIComponent((oi&&oi.value)?oi.value:'24')+
+            '&otaautourl='+encodeURIComponent((otaUrlEl&&otaUrlEl.value)?otaUrlEl.value.trim():'');
       return fetch(p).then(function(r){return r.text();});
     }
     function otaShowStatus(t,ok){
@@ -1154,13 +1150,14 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
       otaSaveSettings().then(function(t){otaShowStatus(t,true);})
         .catch(function(e){otaShowStatus('操作失败: '+e.message,false);oaT.checked=!oaT.checked;});
     });
-    if(oh)oh.addEventListener('change',function(){
-      var v=parseInt(oh.value,10);
-      if(isNaN(v)||v<0||v>23){v=4;oh.value='4';}
+    if(oi)oi.addEventListener('change',function(){
+      var v=parseInt(oi.value,10);
+      if(isNaN(v)||v<1||v>255){v=24;oi.value='24';}
       otaSaveSettings().then(function(t){otaShowStatus(t,true);})
         .catch(function(e){otaShowStatus('操作失败: '+e.message,false);});
     });
-    if(ou)ou.addEventListener('change',function(){
+    /* 链接输入框修改保存后，同时成为自动升级的默认链接 */
+    if(otaUrlEl)otaUrlEl.addEventListener('change',function(){
       otaSaveSettings().then(function(t){otaShowStatus(t,true);})
         .catch(function(e){otaShowStatus('操作失败: '+e.message,false);});
     });

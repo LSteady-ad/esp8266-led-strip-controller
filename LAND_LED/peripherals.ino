@@ -1,54 +1,55 @@
 /**
  * @file peripherals.ino
- * @brief 可选外设：DHT11 温湿度传感器 + 外设/OTA自动升级开关的存取
+ * @brief 可选外设：DHT11 温湿度传感器 + 外设开关 + OTA 定时自动升级
  *
  * 设计说明：
  *  - DHT11 数据脚接 D5 = GPIO14（config.h 的 DHT_PIN），用**手写单总线协议**读取，
- *    不依赖任何第三方库 —— 与本项目"第三方库全部内置在 src/、工程零外部依赖"的思路一致，
- *    任何电脑 clone 下来都能直接编译。
- *  - 外设开关（DHT11 / 红外接收）和"OTA 开机自动升级"开关存在 EEPROM 里（带魔数，
+ *    不依赖任何第三方库 —— 与本项目"第三方库全部内置在 src/、工程零外部依赖"的思路一致。
+ *  - 外设开关（DHT11 / 红外接收）和 OTA 定时自动升级的配置存在 EEPROM 里（带魔数，
  *    未初始化时默认：DHT11 关、红外开、自动升级关 —— 与老版本行为一致）。
- *  - DHT11 最快 1 秒读一次，按测试代码的节奏每 2 秒读一次；
- *    读失败（接线松、校验错）时保留上一次的有效值，不打断灯效。
+ *  - DHT11 最快 1 秒读一次，每 2 秒读一次；读失败（接线松、校验错）时
+ *    保留上一次的有效值，不打断灯效。
  */
 #include "config.h"
 #include <ESP8266HTTPClient.h>
 #include <time.h>
 
+// ---- 外设 ----
 bool  dhtEnabled     = false;   ///< DHT11 是否启用
 bool  irEnabled      = true;    ///< 红外接收是否启用（默认开，保持老版本行为）
-bool  otaAutoEnabled = false;   ///< OTA 开机自动升级是否启用
 float dhtTemperature = 0.0f;    ///< 最近一次成功读取的温度（℃）
 float dhtHumidity    = 0.0f;    ///< 最近一次成功读取的湿度（%）
-
-// ---- OTA 定时自动升级 ----
-uint8_t      otaAutoHour   = OTA_AUTO_HOUR_DEFAULT; ///< 每天自动检查的小时（0~23）
-char         otaAutoUrl[129] = "";    ///< 自动升级链接（空 = 用内置 OTA_AUTO_URL）
-char         otaRemoteTime[33] = "";  ///< 远程固件上传时间（显示用，格式 2026-11-14 19:44:29）
-char         otaLocalTime[33] = "";   ///< 当前固件上传时间（显示用）
-bool         otaCheckSame  = false;   ///< 远程与当前是否同一版本
-unsigned int otaCheckCount = 0;       ///< 完成的检查次数（网页轮询用）
-static char  otaLocalLM[33] = "";     ///< 当前固件的 Last-Modified 原始串（EEPROM 比对用）
-static int   otaAutoLastDay = -1;     ///< 上次执行自动检查是当月几号（每天一次）
-static bool  otaCheckReq = false;     ///< 网页请求了一次检查
-static unsigned long otaCheckLastRun = 0;
-
 static unsigned long lastDHTRead = 0;   ///< 上次读取时间戳
 static bool          dhtInited   = false;
 
+// ---- OTA 定时自动升级 ----
+bool         otaAutoEnabled = false;                          ///< 定时自动升级是否启用
+uint8_t      otaIntervalH   = OTA_AUTO_INTERVAL_DEFAULT;      ///< 自动检查间隔（小时，1~255）
+char         otaAutoUrl[129] = "";                            ///< 自动升级链接（空 = 内置 OTA_AUTO_URL）
+char         otaRemoteTime[33] = "";                          ///< 远程固件上传时间（显示用）
+char         otaLocalTime[33] = "";                           ///< 当前固件上传时间（显示用）
+bool         otaCheckSame  = false;                           ///< 远程与当前是否同一版本
+unsigned int otaCheckCount = 0;                               ///< 完成的检查次数（网页轮询用）
+static char  otaLocalLM[33] = "";                             ///< 当前固件的 Last-Modified 原始串（比对用）
+static unsigned long otaAutoLastRun = 0;                      ///< 上次自动检查的时间戳（0 = 开机后还没查过）
+static bool  otaCheckReq = false;                             ///< 网页请求了一次检查
+static unsigned long otaCheckLastRun = 0;
+
 /**
- * @brief 从 EEPROM 加载外设 / OTA自动升级 开关。
+ * @brief 从 EEPROM 加载外设开关 / OTA 定时自动升级配置。
  *
- * 存储格式（2 字节，追加在 MQTT 服务器配置之后）：[魔数 0xA5][位标志]。
- * 空白 Flash 读出 0xFF 0xFF，与魔数不符 → 视为未初始化 → 写入默认值并落盘。
+ * 存储区域布局（OTA_FLAGS_EEPROM_ADDR 起，共 OTA_FLAGS_TOTAL 字节）：
+ *   [0] 魔数 0xA5   [1] 位标志   [2] 检查间隔小时
+ *   [3~34] 当前固件的 Last-Modified 原始串   [35~162] 自动升级链接
+ * 空白 Flash 与魔数不符 → 写入默认值（DHT11 关、红外开、自动升级关，与老版本一致）。
  */
 void loadPeriphFlags() {
   EEPROM.begin(EEPROM_SIZE);
-  uint8_t magic = EEPROM.read(OTA_FLAGS_EEPROM_ADDR);
-  uint8_t flags = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + 1);
-  uint8_t hourB = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_HOUR_OFF);
-  char    lmBuf[OTA_FLAGS_LM_LEN + 1] = {0};
-  for (int i = 0; i < OTA_FLAGS_LM_LEN; i++) lmBuf[i] = (char)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_LM_OFF + i);
+  uint8_t magic    = EEPROM.read(OTA_FLAGS_EEPROM_ADDR);
+  uint8_t flags    = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + 1);
+  uint8_t interval = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF);
+  char    lmBuf[OTA_FLAGS_LM_LEN + 1]  = {0};
+  for (int i = 0; i < OTA_FLAGS_LM_LEN; i++)  lmBuf[i] = (char)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_LM_OFF + i);
   char    urlBuf[OTA_FLAGS_URL_LEN + 1] = {0};
   for (int i = 0; i < OTA_FLAGS_URL_LEN; i++) urlBuf[i] = (char)EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_URL_OFF + i);
   EEPROM.end();
@@ -66,7 +67,7 @@ void loadPeriphFlags() {
   dhtEnabled     = (flags & PERIPH_FLAG_DHT) != 0;
   irEnabled      = (flags & PERIPH_FLAG_IR)  != 0;
   otaAutoEnabled = (flags & PERIPH_FLAG_OTA) != 0;
-  otaAutoHour    = (hourB <= 23) ? hourB : OTA_AUTO_HOUR_DEFAULT;
+  otaIntervalH   = (interval >= 1 && interval <= 255) ? interval : OTA_AUTO_INTERVAL_DEFAULT;
 
   // Last-Modified 原始串：要求全部为可打印字符，否则视为未知
   bool lmOk = (lmBuf[0] != '\0' && lmBuf[0] != (char)0xFF);
@@ -87,12 +88,15 @@ void loadPeriphFlags() {
   DEBUG_PRINT(dhtEnabled ? "开" : "关");
   DEBUG_PRINT("  红外: ");
   DEBUG_PRINT(irEnabled ? "开" : "关");
-  DEBUG_PRINT("  OTA自动升级: ");
-  DEBUG_PRINTLN(otaAutoEnabled ? "开" : "关");
+  DEBUG_PRINT("  自动升级: ");
+  DEBUG_PRINT(otaAutoEnabled ? "开" : "关");
+  DEBUG_PRINT("  间隔: ");
+  DEBUG_PRINT(otaIntervalH);
+  DEBUG_PRINTLN(" 小时");
 }
 
 /**
- * @brief 将外设 / OTA自动升级 开关写入 EEPROM，并回读校验。
+ * @brief 将外设开关 / OTA 定时自动升级配置写入 EEPROM，并回读校验。
  */
 bool savePeriphFlags() {
   uint8_t magic = OTA_FLAGS_MAGIC;
@@ -104,7 +108,7 @@ bool savePeriphFlags() {
   EEPROM.begin(EEPROM_SIZE);
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR, magic);
   EEPROM.write(OTA_FLAGS_EEPROM_ADDR + 1, flags);
-  EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_HOUR_OFF, otaAutoHour);
+  EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF, otaIntervalH);
   for (int i = 0; i < OTA_FLAGS_LM_LEN; i++) {
     char c = (i < (int)strlen(otaLocalLM)) ? otaLocalLM[i] : 0;
     EEPROM.write(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_LM_OFF + i, c);
@@ -119,11 +123,11 @@ bool savePeriphFlags() {
   EEPROM.begin(EEPROM_SIZE);
   uint8_t vm = EEPROM.read(OTA_FLAGS_EEPROM_ADDR);
   uint8_t vf = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + 1);
-  uint8_t vh = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_HOUR_OFF);
+  uint8_t vh = EEPROM.read(OTA_FLAGS_EEPROM_ADDR + OTA_FLAGS_INTERVAL_OFF);
   EEPROM.end();
-  bool okVerify = (vm == magic && vf == flags && vh == otaAutoHour);
+  bool okVerify = (vm == magic && vf == flags && vh == otaIntervalH);
 
-  DEBUG_PRINT("[外设] 开关保存: commit=");
+  DEBUG_PRINT("[外设] 配置保存: commit=");
   DEBUG_PRINT(okCommit ? "OK" : "FAIL");
   DEBUG_PRINT(" 回读校验=");
   DEBUG_PRINTLN(okVerify ? "OK" : "FAIL");
@@ -224,8 +228,7 @@ void periphTick() {
 /**
  * @brief 解析 HTTP 的 Last-Modified 头（RFC1123 格式，
  *        如 "Sat, 14 Nov 2026 11:44:29 GMT"）→ "2026-11-14 19:44:29"（北京时间）。
- *
- * 解析失败返回 ""。时间直接 +8 小时换算成北京时间，与巴法云 OTA 页面显示一致。
+ *        解析失败返回 ""。+8 小时直接换算成北京时间，与巴法云 OTA 页面显示一致。
  */
 String otaFormatLMStr(const String& raw) {
   int d, y, hh, mm, ss;
@@ -251,7 +254,7 @@ String otaAutoUrlEffective() {
 
 /**
  * @brief HEAD 一次固件链接，取 Last-Modified（即巴法云 OTA 页面的"上传时间"）。
- *        失败 / 无该头返回 ""。HEAD 只拿响应头不下载文件，一两秒内完成。
+ *        只拿响应头不下载文件，一两秒内完成。失败 / 无该头返回 ""。
  */
 String otaFetchRemoteLM(const String& url) {
   WiFiClient c;
@@ -290,8 +293,16 @@ void otaCheckRun() {
   if (lm.length() == 0) {
     strlcpy(otaRemoteTime, "检查失败", sizeof(otaRemoteTime));
     otaCheckSame = false;
+    otaCheckCount++;
+    return;
+  }
+  strlcpy(otaRemoteTime, otaFormatLMStr(lm).c_str(), sizeof(otaRemoteTime));
+  // 本地没有基准（串口烧录后第一次检查）：把远程上传时间登记为基准，
+  // 这样检查更新才不会一直报"有新版本"。
+  if (strlen(otaLocalLM) == 0) {
+    otaSetLocalLM(lm);
+    otaCheckSame = true;
   } else {
-    strlcpy(otaRemoteTime, otaFormatLMStr(lm).c_str(), sizeof(otaRemoteTime));
     otaCheckSame = (lm == String(otaLocalLM));
   }
   otaCheckCount++;
@@ -312,35 +323,44 @@ void otaSetLocalLM(const String& lm) {
 /**
  * @brief OTA 定时自动升级：loop 里每个循环调用。
  *
- * 逻辑：每天在设定的小时（默认 4 点）执行一次检查 ——
+ * 逻辑：每间隔设定的小时数（默认 24 小时）检查一次 ——
  *  1. HEAD 自动升级链接，读 Last-Modified（= 巴法云页面的"上传时间"）
  *  2. 与 EEPROM 里存的"当前固件的上传时间"比对
  *  3. 相同 → 什么都不做（这就是不会循环刷机的关键）
  *     不同 → 触发升级（otaPendingUrl），升级成功后把新的上传时间写入 EEPROM
+ *
+ * 开机后的第一次检查会立即执行，之后按间隔进行。
  */
 void otaAutoTick() {
   if (!otaAutoEnabled) return;
+  if (WiFi.status() != WL_CONNECTED) return;
 
-  time_t now = time(nullptr);
-  if (now < 1700000000) return;            // SNTP 还没对上时，不判断时间
-  struct tm* lt = localtime(&now);
-  if (lt->tm_hour != (int)otaAutoHour) return;      // 不是设定的检查时间
-  if (otaAutoLastDay == lt->tm_mday) return;        // 这一天已经检查过了
-
-  otaAutoLastDay = lt->tm_mday;
-  DEBUG_PRINTLN("[OTA] 每日定时检查开始");
+  unsigned long intervalMs = (unsigned long)otaIntervalH * 3600UL * 1000UL;
+  if (otaAutoLastRun != 0 && millis() - otaAutoLastRun < intervalMs) return;
+  bool first = (otaAutoLastRun == 0);      // 开机后的第一次检查
+  otaAutoLastRun = millis();
+  DEBUG_PRINTLN(first ? "[OTA] 开机首次检查更新" : "[OTA] 到达检查间隔，开始检查");
 
   String lm = otaFetchRemoteLM(otaAutoUrlEffective());
   if (lm.length() == 0) {
-    DEBUG_PRINTLN("[OTA] 读取远端上传时间失败（网络问题），明天再试");
-    otaAutoLastDay = -1;                   // 检查失败不算数，一小时内还会重试
+    DEBUG_PRINTLN("[OTA] 读取远端上传时间失败，1 分钟后重试");
+    otaAutoLastRun = millis() - intervalMs + 60000UL;   // 1 分钟后重试
     return;
   }
 
   strlcpy(otaRemoteTime, otaFormatLMStr(lm).c_str(), sizeof(otaRemoteTime));
-  otaCheckSame = (lm == String(otaLocalLM));
   otaCheckCount++;
 
+  // 本地还没有基准（串口烧录的固件第一次检查）：把远程上传时间登记为基准，
+  // 否则之后每次检查都会误报"有新版本"。
+  if (strlen(otaLocalLM) == 0) {
+    otaSetLocalLM(lm);
+    otaCheckSame = true;
+    DEBUG_PRINTLN("[OTA] 首次检查，已记录当前固件上传时间: " + otaGetLocalTimeStr());
+    return;
+  }
+
+  otaCheckSame = (lm == String(otaLocalLM));
   if (otaCheckSame) {
     DEBUG_PRINTLN("[OTA] 远程固件与当前一致，跳过升级");
     return;

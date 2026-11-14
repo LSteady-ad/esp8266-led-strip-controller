@@ -361,7 +361,7 @@ static const int MQTT_SERVER_EEPROM_ADDR = WIFI_LIST_EEPROM_ADDR + sizeof(WiFiLi
  * 布局（共 163 字节）：
  *   [0]      魔数 0xA5
  *   [1]      位标志：bit0=DHT11  bit1=红外接收  bit2=OTA 定时自动升级
- *   [2]      每天自动检查升级的小时（0~23，0xFF=未设置 → 默认 OTA_AUTO_HOUR_DEFAULT）
+ *   [2]      自动检查间隔小时数（1~255，0xFF=未设置 → 默认 OTA_AUTO_INTERVAL_DEFAULT）
  *   [3~34]   当前固件对应 bin 的 Last-Modified 原始串（32B，全 0xFF/0x00 = 未知）
  *            自动检查时与巴法云文件头里的 Last-Modified（即 OTA 页面的"上传时间"）
  *            比对：相同 → 跳过升级（防止循环刷机）；不同 → 有新版本，触发升级
@@ -372,13 +372,13 @@ static const int OTA_FLAGS_EEPROM_ADDR = MQTT_SERVER_EEPROM_ADDR + sizeof(MqttSe
 #define PERIPH_FLAG_DHT    0x01
 #define PERIPH_FLAG_IR     0x02
 #define PERIPH_FLAG_OTA    0x04
-#define OTA_FLAGS_HOUR_OFF 2
+#define OTA_FLAGS_INTERVAL_OFF 2
 #define OTA_FLAGS_LM_LEN   32
 #define OTA_FLAGS_LM_OFF   3
 #define OTA_FLAGS_URL_OFF  35
 #define OTA_FLAGS_URL_LEN  128
 #define OTA_FLAGS_TOTAL    163
-#define OTA_AUTO_HOUR_DEFAULT 4
+#define OTA_AUTO_INTERVAL_DEFAULT 24
 
 /** EEPROM 总大小（WiFi配置 + 灯珠 + 反向 + 断电计数 + MQTT配置 + WiFi列表 + MQTT服务器） */
 #define EEPROM_SIZE (sizeof(WiFiConfig) + sizeof(uint16_t) + 1 + 1 + sizeof(MqttConfig) + sizeof(WiFiList) + sizeof(MqttServerConfig) + OTA_FLAGS_TOTAL)
@@ -468,7 +468,7 @@ extern bool          otaAutoEnabled;  ///< OTA 开机自动升级是否启用
 extern float         dhtTemperature;  ///< 最近一次成功读取的温度（℃）
 extern float         dhtHumidity;     ///< 最近一次成功读取的湿度（%）
 extern volatile int  otaProgress;     ///< OTA 进度：-1空闲 -2失败 0~99下载中 100写入Flash（/otastatus 返回）
-extern uint8_t       otaAutoHour;     ///< 每天自动检查升级的小时（0~23）
+extern uint8_t       otaIntervalH;    ///< 自动检查升级的间隔（小时，1~255，默认 24）
 extern char          otaAutoUrl[129]; ///< 自动升级固件链接（存 EEPROM，空 = 内置 OTA_AUTO_URL）
 extern char          otaRemoteTime[33]; ///< 最近一次检查到的远程固件上传时间（网页显示用）
 extern char          otaLocalTime[33];  ///< 当前固件对应 bin 的上传时间（网页显示用）
