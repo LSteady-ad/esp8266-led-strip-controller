@@ -1589,20 +1589,19 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 })();
 </script>
 <script>
-/* ── 平滑瀑布流 ──────────────────────────────────────────────────
-   定位方式：卡片 position:absolute，位置只改 transform:translate(x,y)。
-   关键点：**卡片永远不换父节点**（不 appendChild / 不 remove）——
-   节点重新插入会让皮肤的入场动画（animation:up_xxx backwards）从头再播一遍，
-   表现为"所有卡片消失、再从右下角蹦出来"。现在只有 transform 在变，
-   由 CSS transition 平滑滑过去，入场动画不会重放。
+/* ── 平滑瀑布流（保持原始顺序）────────────────────────────────────
+   定位方式：卡片 position:absolute，位置只改 transform:translate(x,y)，
+   由 CSS transition 平滑滑过去。卡片**永远不换父节点**，
+   所以皮肤的入场动画不会重放（不会出现"卡片消失再从右下角蹦出来"）。
 
-   分列方式：LPT（Longest Processing Time）——按高度从高到低，
-   依次放进当前最矮的那一列。这是让「最高列尽量矮」的经典近似最优解，
-   所以各列底部最接近齐平，不会堆在一边，也不会右侧留大片空白。
-   （某张卡片特别高时，它所在列必然偏高，这是物理限制。）
+   分列方式：**按原始顺序连续分段** —— 第 1 竖排是前几张、第 2 竖排接着往下，
+   阅读顺序始终是「先第 1 列从上到下，再第 2 列」。所以每张卡片的大致位置是固定的，
+   展开/收起时只会因为本列高度变化而上下微调（最多在相邻列之间挪一两张），
+   不会像按高度排序那样把卡片撒得到处都是。
+   分段点在若干候选里穷举，取"最高列尽量矮"的那个，兼顾各列高度。
 
-   展开/收起时：分配结果在点击那一刻锁定，之后每帧只重算纵向位置，
-   卡片跟着面板展开连续下移，动画过程中不会中途换列。
+   展开/收起时：分段结果锁定，之后每帧只重算纵向位置，卡片跟着面板连续下移；
+   动画结束后再按新高度重新分段一次（仍然连续分段，顺序不变）。
 */
 (function(){
  var grid=document.querySelector('.grid');
@@ -1615,7 +1614,30 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   });
  }
 
- /* 返回每张卡片所在列号（forced 传入时沿用，用于展开过程中锁定分配） */
+ /* 把高度数组 hs 切成 n 段连续区间，使最高段尽量矮（并列时兼顾方差），返回每段结束下标 */
+ function bestCuts(hs,n){
+  var m=hs.length;
+  if(n<2||m<=n)return null;
+  var bestEnds=null,bestKey=null;
+  function sum(a,b){var s=0;for(var i=a;i<b;i++)s+=hs[i];return s}
+  (function rec(start,left,acc,cuts){
+   if(left===1){
+    var all=acc.concat([sum(start,m)]);
+    var mx=Math.max.apply(null,all);
+    var avg=all.reduce(function(a,b){return a+b},0)/all.length;
+    var cost=all.reduce(function(a,b){return a+(b-avg)*(b-avg)},0);
+    if(bestKey===null||mx<bestKey.mx||(mx===bestKey.mx&&cost<bestKey.cost)){
+     bestKey={mx:mx,cost:cost};
+     bestEnds=cuts.concat([m]);
+    }
+    return;
+   }
+   for(var i=start+1;i<=m-left+1;i++)rec(i,left-1,acc.concat([sum(start,i)]),cuts.concat([i]));
+  })(0,n,[],[]);
+  return bestEnds;
+ }
+
+ /* 返回每张卡片所在列号（forced 传入时沿用，用于展开动画过程中锁定分配） */
  function layout(anim,forced){
   if(!grid)return null;
   var cs=visibleCards();
@@ -1639,31 +1661,24 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   /* 2) 量高度 */
   var hs=cs.map(function(p){return p.offsetHeight+GAP;});
 
-  /* 3) 分配列号 */
-  var assign=new Array(cs.length);
+  /* 3) 连续分段决定列号（保持阅读顺序） */
+  var ends=forced?null:bestCuts(hs,n);
+  var assign=[];
   var yAcc=[];
   for(var i=0;i<n;i++)yAcc.push(0);
-
-  function place(idx,ci){
-   assign[idx]=ci;
+  var ci=0;
+  for(var idx=0;idx<cs.length;idx++){
+   if(forced){
+    ci=(forced[idx]===undefined?0:forced[idx]);
+   }else if(ends){
+    while(ci<ends.length-1&&idx>=ends[ci])ci++;
+   }else{
+    ci=(n===1)?0:Math.min(n-1,Math.floor(idx*n/cs.length));
+   }
+   assign.push(ci);
    var x=Math.round(ci*(cw+GAP)),y=Math.round(yAcc[ci]);
    cs[idx].style.transform='translate('+x+'px,'+y+'px)';
    yAcc[ci]+=hs[idx];
-  }
-
-  if(forced){
-   /* 锁定模式：列号不变，只按新高度重算纵向位置 */
-   for(var f=0;f<cs.length;f++)place(f,(forced[f]===undefined?0:forced[f]));
-  }else{
-   /* LPT：高的先放，放进当前最矮的列 */
-   var order=[];
-   for(var k=0;k<cs.length;k++)order.push(k);
-   order.sort(function(a,b){return hs[b]-hs[a];});
-   for(var o=0;o<order.length;o++){
-    var best=0;
-    for(var c=1;c<n;c++){if(yAcc[c]<yAcc[best])best=c;}
-    place(order[o],best);
-   }
   }
 
   /* 4) 容器高度 = 最高列 */
@@ -1678,21 +1693,21 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
  layout(false);
  window.addEventListener('load',function(){layout(false)});
 
- /* 宽度变化才重算列数与分配（高度变化不影响列数，避免输入框失焦/键盘收起） */
+ /* 宽度变化才重算列数与分段（高度变化不影响列数，避免输入框失焦/键盘收起） */
  window.addEventListener('resize',function(){
   if(window.innerWidth===lastW)return;
   lastW=window.innerWidth;
   clearTimeout(rt);rt=setTimeout(function(){layout(false)},160);
  });
 
- /* 展开/收起：分配锁定，560ms 内每帧重算纵向位置 → 跟面板高度一起连续下移 */
+ /* 展开/收起：分配锁定，560ms 内每帧重算纵向位置 → 跟着面板高度连续下移 */
  [].slice.call(document.querySelectorAll('.accordion-header')).forEach(function(h){
   h.addEventListener('click',function(){
    var t0=Date.now(),assign=null;
    (function tick(){
     assign=layout(true,assign);
     if(Date.now()-t0<560){requestAnimationFrame(tick);}
-    else{setTimeout(function(){layout(true)},140);}   /* 动画结束后按新高度再平衡一次 */
+    else{setTimeout(function(){layout(true)},140);}   /* 结束后按新高度重新分段（顺序不变） */
    })();
   });
  });
