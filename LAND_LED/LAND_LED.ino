@@ -170,7 +170,6 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
     <div class="dhtcell"><div class="dhtnum" id="dhtTemp">--</div><div class="dhtlb">温度 ℃</div></div>
     <div class="dhtcell"><div class="dhtnum" id="dhtHumi">--</div><div class="dhtlb">湿度 %</div></div>
   </div>
-  <div class="hint" id="dhtHint">在「⚙ 灯带设置」里开启 DHT11（接 D5 / GPIO14）后，这里每 2 秒刷新一次。</div>
 </div></div></section>
 <section class="p accordion-panel open"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">🔆 灯光模式</span>
 <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="reverseToggle"><span class="tr"></span></label>
@@ -269,7 +268,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="dhtToggle"><span class="tr"></span></label></div></div>
   <div class="row"><span style="flex:1">📡 红外接收<small style="opacity:.6"> 接 D2 / GPIO4</small></span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="irToggle"><span class="tr"></span></label></div></div>
-  <div class="row"><span style="flex:1">☁ 巴法云 MQTT<small style="opacity:.6"> 关闭后隐藏 MQTT 卡片</small></span>
+  <div class="row"><span style="flex:1">☁ 巴法云 MQTT</span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="mqttToggle"><span class="tr"></span></label></div>
   <span id="mqttToggleStatus" style="font-size:11px;min-width:34px;text-align:center">开</span></div>
   <div class="cs" id="periphStatus"></div>
@@ -350,7 +349,6 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 <section class="p accordion-panel skin-panel"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">🎨 界面皮肤</span><span class="tg" id="skinName">新粗野</span></div>
 <div class="pb accordion-body"><div class="in">
   <div class="skbar" id="skinBar"></div>
-  <div class="sktip">点一下立即切换外观，选择会保存在这台设备上。也可以用快捷键 1~5 切换。</div>
 </div></div></section>
 </div>
 </div>
