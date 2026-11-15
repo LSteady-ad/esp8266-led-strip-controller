@@ -163,7 +163,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 
 </div>
 <div class="grid">
-<section class="p accordion-panel open"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">🌡 温湿度</span><span class="tg i" id="dhtTag">未启用</span></div>
+<section class="p accordion-panel open" id="dhtCard"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">🌡 温湿度</span><span class="tg i" id="dhtTag">未启用</span></div>
 <div class="pb accordion-body open"><div class="in">
   <div class="clockbox"><div class="clocknum" id="dhtClock">--:--:--</div><div class="clocklb" id="clockDate">网络时间同步中…</div></div>
   <div class="dhtgrid">
@@ -269,6 +269,9 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="dhtToggle"><span class="tr"></span></label></div></div>
   <div class="row"><span style="flex:1">📡 红外接收<small style="opacity:.6"> 接 D2 / GPIO4</small></span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="irToggle"><span class="tr"></span></label></div></div>
+  <div class="row"><span style="flex:1">☁ 巴法云 MQTT<small style="opacity:.6"> 关闭后隐藏 MQTT 卡片</small></span>
+  <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="mqttToggle"><span class="tr"></span></label></div>
+  <span id="mqttToggleStatus" style="font-size:11px;min-width:34px;text-align:center">开</span></div>
   <div class="cs" id="periphStatus"></div>
   <div class="row"><button class="btn r dgr" id="restartDevice" style="width:100%">🔄 重启设备</button></div>
 </div></div></section>
@@ -307,9 +310,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
     <div class="it"><span class="dot"></span><span class="nm">CMCC-9f2a</span><button class="mb ab" data-act="use">连接</button><button class="mb ab" data-act="up" title="上移（提高优先级）">↑</button><button class="mb ab" data-act="down" disabled title="下移（降低优先级）">↓</button><button class="mb ab" data-act="pw" title="修改密码">🔑</button><button class="mb ab d r" data-act="del" title="删除">✕</button></div>
   </div>
 </div></div></section>
-<section class="p accordion-panel"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">☁ 巴法云 MQTT</span>
-<div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="mqttToggle" checked><span class="tr"></span></label>
-<span id="mqttToggleStatus">开</span></div></div>
+<section class="p accordion-panel" id="mqttCard"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">☁ 巴法云 MQTT</span></div>
 <div class="pb accordion-body"><div class="in">
   <div data-sk="0 1" class="st">👥 云平台连接</div>
   <div data-sk="4" class="st">■ CLOUD LINK</div>
@@ -1019,6 +1020,12 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         if(_mp&&document.activeElement!==_mp)_mp.value=data.mqttPort||'';
         document.getElementById('dhtToggle').checked=!!data.dhtEnabled;
         document.getElementById('irToggle').checked=!!data.irEnabled;
+        document.getElementById('mqttToggle').checked=!!data.mqttEnabled;
+        /* 功能卡片跟着开关显隐：关了就收起；MQTT 未填 Client ID 时保持可见以便配置 */
+        var _dhtCard=document.getElementById('dhtCard');
+        if(_dhtCard)_dhtCard.style.display=data.dhtEnabled?'':'none';
+        var _mqttCard=document.getElementById('mqttCard');
+        if(_mqttCard)_mqttCard.style.display=(data.mqttEnabled||!data.mqttClientId)?'':'none';
         var _oi=document.getElementById('otaInterval');
         if(_oi&&document.activeElement!==_oi)_oi.value=data.otaInterval||240;
         var _ob=document.getElementById('otaBemfaBox');
