@@ -391,12 +391,26 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         }else{
           body.classList.add('open');
           panel.classList.add('open');
-          /* 手机（窄屏）：展开后把这张卡片滑到屏幕最上方，方便直接操作 */
+          /* 手机（窄屏）：展开后把这张卡片滑到屏幕最上方。
+             注意要滚两次：布局跟随（每帧重算位置）会把平滑滚动打断，
+             所以 60ms 先滚一次，等展开动画和布局都稳定后（640ms）再校准一次。 */
           if(window.innerWidth<780){
-            setTimeout(function(){
-              var y=panel.getBoundingClientRect().top+window.pageYOffset-6;
-              window.scrollTo({top:y,behavior:'smooth'});
-            },40);
+            var alignTop=function(){
+              var y=Math.max(0,panel.getBoundingClientRect().top+(window.pageYOffset||0)-8);
+              var maxScroll=document.documentElement.scrollHeight-window.innerHeight;
+              if(y>maxScroll-4){
+                /* 这张卡片下面的内容不够长，浏览器最多只能滚到底：
+                   临时把瀑布流容器再加高一点，保证它能滚到屏幕最上面 */
+                var g=document.querySelector('.grid');
+                if(g){g.style.height=(g.offsetHeight+(y-maxScroll)+20)+'px';}
+                maxScroll=document.documentElement.scrollHeight-window.innerHeight;
+                if(y>maxScroll)y=maxScroll;
+              }
+              try{window.scrollTo({top:y,behavior:'smooth'});}
+              catch(err){window.scrollTo(0,y);}
+            };
+            setTimeout(alignTop,60);
+            setTimeout(alignTop,800);   /* 等布局最后一次分段完成后再校准 */
           }
         }
       });
