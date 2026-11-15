@@ -269,8 +269,8 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   <div class="row"><span style="flex:1">📡 红外接收<small style="opacity:.6"> 接 D2 / GPIO4</small></span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="irToggle"><span class="tr"></span></label></div></div>
   <div class="row"><span style="flex:1">☁ 巴法云 MQTT</span>
-  <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="mqttToggle"><span class="tr"></span></label></div>
-  <span id="mqttToggleStatus" style="font-size:11px;min-width:34px;text-align:center">开</span></div>
+  <span id="mqttToggleStatus" style="font-size:11px;min-width:34px;text-align:right">开</span>
+  <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="mqttToggle"><span class="tr"></span></label></div></div>
   <div class="cs" id="periphStatus"></div>
   <div class="row"><button class="btn r dgr" id="restartDevice" style="width:100%">🔄 重启设备</button></div>
 </div></div></section>
@@ -392,6 +392,13 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         }else{
           body.classList.add('open');
           panel.classList.add('open');
+          /* 手机（窄屏）：展开后把这张卡片滑到屏幕最上方，方便直接操作 */
+          if(window.innerWidth<780){
+            setTimeout(function(){
+              var y=panel.getBoundingClientRect().top+window.pageYOffset-6;
+              window.scrollTo({top:y,behavior:'smooth'});
+            },40);
+          }
         }
       });
     });
@@ -1021,9 +1028,18 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
         document.getElementById('mqttToggle').checked=!!data.mqttEnabled;
         /* 功能卡片跟着开关显隐：关了就收起；MQTT 未填 Client ID 时保持可见以便配置 */
         var _dhtCard=document.getElementById('dhtCard');
-        if(_dhtCard)_dhtCard.style.display=data.dhtEnabled?'':'none';
         var _mqttCard=document.getElementById('mqttCard');
-        if(_mqttCard)_mqttCard.style.display=(data.mqttEnabled||!data.mqttClientId)?'':'none';
+        var _visChanged=false;
+        if(_dhtCard){
+          var _wD=(_dhtCard.style.display!=='none'), _nD=!!data.dhtEnabled;
+          if(_wD!==_nD){_dhtCard.style.display=_nD?'':'none';_visChanged=true;}
+        }
+        if(_mqttCard){
+          var _wM=(_mqttCard.style.display!=='none'), _nM=(!!data.mqttEnabled||!data.mqttClientId);
+          if(_wM!==_nM){_mqttCard.style.display=_nM?'':'none';_visChanged=true;}
+        }
+        /* 显隐变化后重排一次（无动画），让隐藏卡片的空位被其它卡片补上 */
+        if(_visChanged&&window.__relayout)window.__relayout(false);
         var _oi=document.getElementById('otaInterval');
         if(_oi&&document.activeElement!==_oi)_oi.value=data.otaInterval||240;
         var _ob=document.getElementById('otaBemfaBox');
@@ -1620,7 +1636,11 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   var _ae=document.activeElement;
   if(_ae&&/^(INPUT|SELECT|TEXTAREA)$/i.test(_ae.tagName||''))return;
   if(anim&&window.innerWidth<ANIM_MIN)anim=false;   /* 窄屏不做位移动画 */
-  var ps=[].slice.call(grid.querySelectorAll('section.p'));
+  var all=[].slice.call(grid.querySelectorAll('section.p'));
+  /* 只给"可见"的卡片分列：display:none 的卡片（关闭 DHT/MQTT 后隐藏）
+     不参与高度计算，否则会在列里留下看不见的空位。隐藏卡片统一塞到最后一列末尾。 */
+  var ps=all.filter(function(p){return p.style.display!=='none'&&p.offsetParent!==null;});
+  var hiddenCards=all.filter(function(p){return ps.indexOf(p)<0;});
   if(!ps.length)return;
   var first=null;
   if(anim){first={};ps.forEach(function(p){first[p]=p.getBoundingClientRect();});}
@@ -1636,6 +1656,8 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
    for(var k=at;k<end;k++)cs[ci].appendChild(ps[k]);
    at=end;
   }
+  /* 隐藏的卡片丢到最后一列末尾（display:none 不渲染、不占位） */
+  hiddenCards.forEach(function(p){cs[n-1].appendChild(p);});
   if(anim){ps.forEach(function(p){
    var f=first[p],l=p.getBoundingClientRect(),dx=f.left-l.left,dy=f.top-l.top;
    if(dx||dy){p.style.transition='none';p.style.transform='translate('+dx+'px,'+dy+'px)';
@@ -1653,10 +1675,11 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   lastW=window.innerWidth;
   clearTimeout(rt);rt=setTimeout(function(){masonry(true)},160);
  });
- /* 展开/收起后重新分组对齐高度（手机只有 1 列时不会发生任何位移） */
- [].slice.call(document.querySelectorAll('.accordion-header')).forEach(function(h){
-  h.addEventListener('click',function(){setTimeout(function(){masonry(true)},420)});
- });
+ /* 【不再在每次展开/收起后重新分列】
+    以前这里每次点击都会 420ms 后 masonry(true) 整页重新分组，
+    桌面 4 列会全部重排 → 用户点开一张卡片，其它卡片全跑位，得重新找。
+    现在列归属只在「初始加载 / 窗口宽度变化 / 卡片显隐变化」时计算：
+    展开一张卡片只会把它所在列的下方卡片往下推，其它列纹丝不动。 */
  window.addEventListener('load',function(){masonry(false)});
  setTimeout(function(){if(grid)grid.classList.add('msd')},1000);
 })();
