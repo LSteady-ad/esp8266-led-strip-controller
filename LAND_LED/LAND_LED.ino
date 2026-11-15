@@ -1590,33 +1590,43 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 </script>
 <script>
 /* ── 平滑瀑布流 ──────────────────────────────────────────────────
-   做法：卡片 position:absolute，用 transform:translate(x,y) 摆位置。
-   关键点：**卡片永远不换父节点**（不 appendChild / 不 remove）。
-   以前的做法会把卡片在各个 .mcol 列之间搬来搬去 —— 节点一重新插入，
-   皮肤的入场动画（animation:up_xxx backwards）就会从头播一遍，
-   看起来就是"所有卡片消失，再从右下角蹦出来"。
-   现在位置变化只改 transform，由 CSS transition 平滑滑过去，DOM 全程不动，
-   入场动画不会重放，切换展开也看不到"重新加载"。
-   分列按「最短列优先」，不会出现卡片堆在一边、右侧大片空白。 */
+   定位方式：卡片 position:absolute，位置只改 transform:translate(x,y)。
+   关键点：**卡片永远不换父节点**（不 appendChild / 不 remove）——
+   节点重新插入会让皮肤的入场动画（animation:up_xxx backwards）从头再播一遍，
+   表现为"所有卡片消失、再从右下角蹦出来"。现在只有 transform 在变，
+   由 CSS transition 平滑滑过去，入场动画不会重放。
+
+   分列方式：LPT（Longest Processing Time）——按高度从高到低，
+   依次放进当前最矮的那一列。这是让「最高列尽量矮」的经典近似最优解，
+   所以各列底部最接近齐平，不会堆在一边，也不会右侧留大片空白。
+   （某张卡片特别高时，它所在列必然偏高，这是物理限制。）
+
+   展开/收起时：分配结果在点击那一刻锁定，之后每帧只重算纵向位置，
+   卡片跟着面板展开连续下移，动画过程中不会中途换列。
+*/
 (function(){
  var grid=document.querySelector('.grid');
  if(!grid)return;
  var MINW=320,GAP=14,MAXCOL=4,rt=null,lastW=window.innerWidth;
+
  function visibleCards(){
   return [].slice.call(grid.querySelectorAll('section.p')).filter(function(p){
    return p.style.display!=='none';
   });
  }
- function layout(anim){
-  if(!grid)return;
+
+ /* 返回每张卡片所在列号（forced 传入时沿用，用于展开过程中锁定分配） */
+ function layout(anim,forced){
+  if(!grid)return null;
   var cs=visibleCards();
-  if(!cs.length)return;
+  if(!cs.length)return null;
   var W=grid.clientWidth;
   var n=Math.max(1,Math.min(MAXCOL,Math.floor((W+GAP)/(MINW+GAP))));
   var cw=(W-GAP*(n-1))/n;
   if(cw<120){n=1;cw=W;}
+
   var tr=anim?'transform .42s cubic-bezier(.22,.9,.3,1)':'none';
-  /* 先统一宽度（高度测量依赖宽度） */
+  /* 1) 统一宽度（量高度依赖宽度） */
   cs.forEach(function(p){
    p.style.position='absolute';
    p.style.left='0';
@@ -1625,36 +1635,68 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
    p.style.width=cw+'px';
    p.style.transition=tr;
   });
-  var hs=[];for(var i=0;i<n;i++)hs.push(0);
-  cs.forEach(function(p){
-   var ci=0;for(var k=1;k<n;k++){if(hs[k]<hs[ci])ci=k;}
-   var x=Math.round(ci*(cw+GAP)),y=Math.round(hs[ci]);
-   p.style.transform='translate('+x+'px,'+y+'px)';
-   hs[ci]+=p.offsetHeight+GAP;
-  });
-  var maxH=0;for(var j=0;j<n;j++){if(hs[j]>maxH)maxH=hs[j];}
+
+  /* 2) 量高度 */
+  var hs=cs.map(function(p){return p.offsetHeight+GAP;});
+
+  /* 3) 分配列号 */
+  var assign=new Array(cs.length);
+  var yAcc=[];
+  for(var i=0;i<n;i++)yAcc.push(0);
+
+  function place(idx,ci){
+   assign[idx]=ci;
+   var x=Math.round(ci*(cw+GAP)),y=Math.round(yAcc[ci]);
+   cs[idx].style.transform='translate('+x+'px,'+y+'px)';
+   yAcc[ci]+=hs[idx];
+  }
+
+  if(forced){
+   /* 锁定模式：列号不变，只按新高度重算纵向位置 */
+   for(var f=0;f<cs.length;f++)place(f,(forced[f]===undefined?0:forced[f]));
+  }else{
+   /* LPT：高的先放，放进当前最矮的列 */
+   var order=[];
+   for(var k=0;k<cs.length;k++)order.push(k);
+   order.sort(function(a,b){return hs[b]-hs[a];});
+   for(var o=0;o<order.length;o++){
+    var best=0;
+    for(var c=1;c<n;c++){if(yAcc[c]<yAcc[best])best=c;}
+    place(order[o],best);
+   }
+  }
+
+  /* 4) 容器高度 = 最高列 */
+  var maxH=0;
+  for(var j=0;j<n;j++){if(yAcc[j]>maxH)maxH=yAcc[j];}
   grid.style.position='relative';
   grid.style.height=(maxH>0?maxH-GAP:0)+'px';
+  return assign;
  }
- window.__relayout=layout;
+
+ window.__relayout=function(a){layout(a);};
  layout(false);
  window.addEventListener('load',function(){layout(false)});
- /* 宽度变化才重算列数（高度变化不影响列数，避免输入框失焦/键盘收起） */
+
+ /* 宽度变化才重算列数与分配（高度变化不影响列数，避免输入框失焦/键盘收起） */
  window.addEventListener('resize',function(){
   if(window.innerWidth===lastW)return;
   lastW=window.innerWidth;
   clearTimeout(rt);rt=setTimeout(function(){layout(false)},160);
  });
- /* 展开/收起：面板高度是 0.38s 过渡，这期间每帧重算，下方卡片跟着一起平滑下移 */
+
+ /* 展开/收起：分配锁定，560ms 内每帧重算纵向位置 → 跟面板高度一起连续下移 */
  [].slice.call(document.querySelectorAll('.accordion-header')).forEach(function(h){
   h.addEventListener('click',function(){
-   var t0=Date.now();
+   var t0=Date.now(),assign=null;
    (function tick(){
-    layout(true);
-    if(Date.now()-t0<560)requestAnimationFrame(tick);
+    assign=layout(true,assign);
+    if(Date.now()-t0<560){requestAnimationFrame(tick);}
+    else{setTimeout(function(){layout(true)},140);}   /* 动画结束后按新高度再平衡一次 */
    })();
   });
  });
+
  setTimeout(function(){if(grid)grid.classList.add('msd')},1000);
 })();
 </script>
