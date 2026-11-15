@@ -1644,6 +1644,8 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   if(!cs.length)return null;
   var W=grid.clientWidth;
   var n=Math.max(1,Math.min(MAXCOL,Math.floor((W+GAP)/(MINW+GAP))));
+  /* 手机/窄屏：强制单列。卡片顺序严格等于 DOM 原始顺序，展开收起只上下推挤，绝不换位。 */
+  if(window.innerWidth<780)n=1;
   var cw=(W-GAP*(n-1))/n;
   if(cw<120){n=1;cw=W;}
 
