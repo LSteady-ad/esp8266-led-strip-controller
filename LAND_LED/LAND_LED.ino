@@ -269,7 +269,6 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
   <div class="row"><span style="flex:1">📡 红外接收<small style="opacity:.6"> 接 D2 / GPIO4</small></span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="irToggle"><span class="tr"></span></label></div></div>
   <div class="row"><span style="flex:1">☁ 巴法云 MQTT</span>
-  <span id="mqttToggleStatus" style="font-size:11px;min-width:34px;text-align:right">开</span>
   <div class="sw" onclick="event.stopPropagation()"><label class="sw"><input type="checkbox" id="mqttToggle"><span class="tr"></span></label></div></div>
   <div class="cs" id="periphStatus"></div>
   <div class="row"><button class="btn r dgr" id="restartDevice" style="width:100%">🔄 重启设备</button></div>
@@ -309,7 +308,7 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
     <div class="it"><span class="dot"></span><span class="nm">CMCC-9f2a</span><button class="mb ab" data-act="use">连接</button><button class="mb ab" data-act="up" title="上移（提高优先级）">↑</button><button class="mb ab" data-act="down" disabled title="下移（降低优先级）">↓</button><button class="mb ab" data-act="pw" title="修改密码">🔑</button><button class="mb ab d r" data-act="del" title="删除">✕</button></div>
   </div>
 </div></div></section>
-<section class="p accordion-panel" id="mqttCard"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">☁ 巴法云 MQTT</span></div>
+<section class="p accordion-panel" id="mqttCard"><div class="ph accordion-header"><span class="ar">▼</span><span class="ti">☁ 巴法云 MQTT</span><span class="tg i" id="mqttToggleStatus">已连接</span></div>
 <div class="pb accordion-body"><div class="in">
   <div data-sk="0 1" class="st">👥 云平台连接</div>
   <div data-sk="4" class="st">■ CLOUD LINK</div>
@@ -1590,98 +1589,72 @@ document.body.setAttribute('data-skin',_n);document.body.classList.add('sk'+_n);
 })();
 </script>
 <script>
-/* ── 布局：按顺序**连续分组**成 N 列，并让各列高度尽量对齐 ──
-   规则：
-   1. 顺序 = 原始顺序（灯光模式 → … → 界面皮肤），阅读顺序是「先第 1 竖排从上到下，
-      再第 2 竖排」，列内顺序固定不会跳来跳去；
-   2. 列数 = min(4, 可用宽度允许的列数)，手机竖屏就是 1 列；
-   3. 展开/收起后重新分组，让各列高度尽量对齐（1 列时不动，手机上位置永远不变）。 */
+/* ── 平滑瀑布流 ──────────────────────────────────────────────────
+   做法：卡片 position:absolute，用 transform:translate(x,y) 摆位置。
+   关键点：**卡片永远不换父节点**（不 appendChild / 不 remove）。
+   以前的做法会把卡片在各个 .mcol 列之间搬来搬去 —— 节点一重新插入，
+   皮肤的入场动画（animation:up_xxx backwards）就会从头播一遍，
+   看起来就是"所有卡片消失，再从右下角蹦出来"。
+   现在位置变化只改 transform，由 CSS transition 平滑滑过去，DOM 全程不动，
+   入场动画不会重放，切换展开也看不到"重新加载"。
+   分列按「最短列优先」，不会出现卡片堆在一边、右侧大片空白。 */
 (function(){
  var grid=document.querySelector('.grid');
- var MINW=320,GAP=14,MAXCOL=4,ANIM_MIN=780,rt=null,laid=false;
- function cols(){return [].slice.call(grid.querySelectorAll('.mcol'));}
- function mkcols(n){
-  cols().forEach(function(c){c.remove()});
-  var cs=[];
-  for(var i=0;i<n;i++){var c=document.createElement('div');c.className='mcol';grid.appendChild(c);cs.push(c);}
-  return cs;
+ if(!grid)return;
+ var MINW=320,GAP=14,MAXCOL=4,rt=null,lastW=window.innerWidth;
+ function visibleCards(){
+  return [].slice.call(grid.querySelectorAll('section.p')).filter(function(p){
+   return p.style.display!=='none';
+  });
  }
- /* 把 hs 顺序切成 n 段，让最高的那段尽量矮（并兼顾方差），返回每段结束下标 */
- function bestCuts(hs,n){
-  var m=hs.length;
-  if(n<2||m<=n)return null;
-  var bestCuts=null,bestKey=null;
-  function sum(a,b){var s=0;for(var i=a;i<b;i++)s+=hs[i];return s}
-  (function rec(start,left,acc,cuts){
-   if(left===1){
-    var all=acc.concat([sum(start,m)]);
-    var mx=Math.max.apply(null,all);
-    var avg=all.reduce(function(a,b){return a+b},0)/all.length;
-    var cost=all.reduce(function(a,b){return a+(b-avg)*(b-avg)},0);
-    if(bestKey===null||mx<bestKey.mx||(mx===bestKey.mx&&cost<bestKey.cost)){
-     bestKey={mx:mx,cost:cost};bestCuts=cuts.concat([m]);
-    }
-    return;
-   }
-   for(var i=start+1;i<=m-left+1;i++)rec(i,left-1,acc.concat([sum(start,i)]),cuts.concat([i]));
-  })(0,n,[],[]);
-  return bestCuts;
- }
- function masonry(anim){
+ function layout(anim){
   if(!grid)return;
-  /* 【关键】有输入框聚焦时绝不重排。
-     masonry 会把面板 appendChild 到各列 —— 移动节点会让输入框失焦（手机键盘
-     立刻收起），还会让所有 CSS 动画重新开始（按钮扫光卡顿重来）。
-     手机点输入框 → 键盘弹出 → 视口 resize → 这里被触发，正是"键盘刚出就下去"的元凶。 */
-  var _ae=document.activeElement;
-  if(_ae&&/^(INPUT|SELECT|TEXTAREA)$/i.test(_ae.tagName||''))return;
-  if(anim&&window.innerWidth<ANIM_MIN)anim=false;   /* 窄屏不做位移动画 */
-  var all=[].slice.call(grid.querySelectorAll('section.p'));
-  /* 只给"可见"的卡片分列：display:none 的卡片（关闭 DHT/MQTT 后隐藏）
-     不参与高度计算，否则会在列里留下看不见的空位。隐藏卡片统一塞到最后一列末尾。 */
-  var ps=all.filter(function(p){return p.style.display!=='none'&&p.offsetParent!==null;});
-  var hiddenCards=all.filter(function(p){return ps.indexOf(p)<0;});
-  if(!ps.length)return;
-  var first=null;
-  if(anim){first={};ps.forEach(function(p){first[p]=p.getBoundingClientRect();});}
-  var w=grid.clientWidth;
-  var n=Math.max(1,Math.min(MAXCOL,ps.length,Math.floor((w+GAP)/(MINW+GAP))));
-  /* 首次运行时面板还挤在 flex 行里、宽度不对，先全塞进第 1 列量准高度 */
-  if(!laid){laid=true;var c0=mkcols(n)[0];ps.forEach(function(p){c0.appendChild(p)});}
-  var hs=ps.map(function(p){return p.offsetHeight+GAP;});
-  var cuts=bestCuts(hs,n);
-  var cs=mkcols(n),at=0;
-  for(var ci=0;ci<n;ci++){
-   var end=cuts?cuts[ci]:(ci===n-1?ps.length:at+Math.ceil((ps.length-at)/(n-ci)));
-   for(var k=at;k<end;k++)cs[ci].appendChild(ps[k]);
-   at=end;
-  }
-  /* 隐藏的卡片丢到最后一列末尾（display:none 不渲染、不占位） */
-  hiddenCards.forEach(function(p){cs[n-1].appendChild(p);});
-  if(anim){ps.forEach(function(p){
-   var f=first[p],l=p.getBoundingClientRect(),dx=f.left-l.left,dy=f.top-l.top;
-   if(dx||dy){p.style.transition='none';p.style.transform='translate('+dx+'px,'+dy+'px)';
-    requestAnimationFrame(function(){requestAnimationFrame(function(){
-     p.style.transition='transform .45s cubic-bezier(.22,.9,.3,1)';p.style.transform='';});});}
-  });}
+  var cs=visibleCards();
+  if(!cs.length)return;
+  var W=grid.clientWidth;
+  var n=Math.max(1,Math.min(MAXCOL,Math.floor((W+GAP)/(MINW+GAP))));
+  var cw=(W-GAP*(n-1))/n;
+  if(cw<120){n=1;cw=W;}
+  var tr=anim?'transform .42s cubic-bezier(.22,.9,.3,1)':'none';
+  /* 先统一宽度（高度测量依赖宽度） */
+  cs.forEach(function(p){
+   p.style.position='absolute';
+   p.style.left='0';
+   p.style.top='0';
+   p.style.margin='0';
+   p.style.width=cw+'px';
+   p.style.transition=tr;
+  });
+  var hs=[];for(var i=0;i<n;i++)hs.push(0);
+  cs.forEach(function(p){
+   var ci=0;for(var k=1;k<n;k++){if(hs[k]<hs[ci])ci=k;}
+   var x=Math.round(ci*(cw+GAP)),y=Math.round(hs[ci]);
+   p.style.transform='translate('+x+'px,'+y+'px)';
+   hs[ci]+=p.offsetHeight+GAP;
+  });
+  var maxH=0;for(var j=0;j<n;j++){if(hs[j]>maxH)maxH=hs[j];}
+  grid.style.position='relative';
+  grid.style.height=(maxH>0?maxH-GAP:0)+'px';
  }
- window.__relayout=masonry;
- masonry(false);
- /* 只在「宽度变了」时重排：列数只跟宽度有关。手机弹/收键盘只改高度，
-    以前会误触发重排 → 丢焦点 + 收键盘 + 动画重来。 */
- var lastW=window.innerWidth;
+ window.__relayout=layout;
+ layout(false);
+ window.addEventListener('load',function(){layout(false)});
+ /* 宽度变化才重算列数（高度变化不影响列数，避免输入框失焦/键盘收起） */
  window.addEventListener('resize',function(){
   if(window.innerWidth===lastW)return;
   lastW=window.innerWidth;
-  clearTimeout(rt);rt=setTimeout(function(){masonry(true)},160);
+  clearTimeout(rt);rt=setTimeout(function(){layout(false)},160);
  });
- /* 展开/收起后重新平衡各列高度，但用 FLIP 动画平滑移动（桌面 0.45s 滑动到位）。
-    既不堆在一边，也不会瞬间跳位 —— 眼睛能跟得上卡片滑到哪去了。
-    手机只有 1 列时 masonry 实际不做任何分配，无位移。 */
+ /* 展开/收起：面板高度是 0.38s 过渡，这期间每帧重算，下方卡片跟着一起平滑下移 */
  [].slice.call(document.querySelectorAll('.accordion-header')).forEach(function(h){
-  h.addEventListener('click',function(){setTimeout(function(){masonry(true)},400)});
+  h.addEventListener('click',function(){
+   var t0=Date.now();
+   (function tick(){
+    layout(true);
+    if(Date.now()-t0<560)requestAnimationFrame(tick);
+   })();
+  });
  });
- window.addEventListener('load',function(){masonry(false)});
  setTimeout(function(){if(grid)grid.classList.add('msd')},1000);
 })();
 </script>
